@@ -1,0 +1,2227 @@
+﻿
+// ===== FILE: lib\models\comment_model.dart =====
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class CommentModel {
+  final String id;
+  final String userId;
+  final String username;
+  final String text;
+  final Timestamp createdAt;
+
+  CommentModel({
+    required this.id,
+    required this.userId,
+    required this.username,
+    required this.text,
+    required this.createdAt,
+  });
+
+  factory CommentModel.fromDoc(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return CommentModel(
+      id: doc.id,
+      userId: data['userId'] ?? '',
+      username: data['username'] ?? 'Unknown',
+      text: data['text'] ?? '',
+      createdAt: data['createdAt'] ?? Timestamp.now(),
+    );
+  }
+}
+
+
+// ===== FILE: lib\models\post_model.dart =====
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class PostModel {
+  final String id;
+  final String userId;
+  final String username;
+  final String content;
+  final int likesCount;
+  final int commentsCount;
+  final int viewsCount;
+  final Timestamp createdAt;
+
+  PostModel({
+    required this.id,
+    required this.userId,
+    required this.username,
+    required this.content,
+    required this.likesCount,
+    required this.commentsCount,
+    required this.viewsCount,
+    required this.createdAt,
+  });
+
+  factory PostModel.fromDoc(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return PostModel(
+      id: doc.id,
+      userId: data['userId'] ?? '',
+      username: data['username'] ?? 'Unknown',
+      content: data['content'] ?? '',
+      likesCount: data['likesCount'] ?? 0,
+      commentsCount: data['commentsCount'] ?? 0,
+      viewsCount: data['viewsCount'] ?? 0,
+      createdAt: data['createdAt'] ?? Timestamp.now(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+    'userId': userId,
+    'username': username,
+    'content': content,
+    'likesCount': likesCount,
+    'commentsCount': commentsCount,
+    'viewsCount': viewsCount,
+    'createdAt': createdAt,
+  };
+}
+
+
+// ===== FILE: lib\screens\chat_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+
+class ChatScreen extends StatefulWidget {
+  final String otherUserId;
+  final String otherUsername;
+  const ChatScreen({super.key, required this.otherUserId,
+    required this.otherUsername});
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+  bool _sending = false;
+  late String _chatId;
+  late String _currentUserId;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUserId = FirebaseAuth.instance.currentUser!.uid;
+    final ids = [_currentUserId, widget.otherUserId]..sort();
+    _chatId = ids.join('_');
+    _ensureChatExists();
+  }
+
+  Future<void> _ensureChatExists() async {
+    final ref = FirebaseFirestore.instance.collection('chats').doc(_chatId);
+    final doc = await ref.get();
+    if (!doc.exists) {
+      await ref.set({
+        'userA': _currentUserId,
+        'userB': widget.otherUserId,
+        'lastMessage': '',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'partnershipStatus': 'none',
+      });
+    }
+  }
+
+  Future<void> _send() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty || _sending) return;
+    if (text.length > 500) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Message too long')));
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      await FirebaseFirestore.instance
+          .collection('chats').doc(_chatId)
+          .collection('messages').add({
+        'senderId': _currentUserId,
+        'text': text,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      await FirebaseFirestore.instance
+          .collection('chats').doc(_chatId).update({
+        'lastMessage': text,
+        'lastMessageTime': FieldValue.serverTimestamp(),
+      });
+      _controller.clear();
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    } catch (_) {}
+    if (mounted) setState(() => _sending = false);
+  }
+
+  String _timeAgo(Timestamp? ts) {
+    if (ts == null) return '';
+    final d = ts.toDate();
+    return DateFormat('HH:mm').format(d);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: Colors.blue[100],
+              child: Text(
+                widget.otherUsername.isNotEmpty
+                  ? widget.otherUsername[0].toUpperCase() : '?',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(widget.otherUsername,
+                  style: const TextStyle(fontSize: 16)),
+                const Text('Online',
+                  style: TextStyle(fontSize: 12, color: Colors.white70)),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Partnership popup coming soon!')));
+            },
+            icon: const Icon(Icons.handshake, color: Colors.white, size: 20),
+            label: const Text('Partnerup',
+              style: TextStyle(color: Colors.white, fontSize: 12)),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('chats').doc(_chatId)
+                  .collection('messages')
+                  .orderBy('timestamp', descending: false)
+                  .snapshots(),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (!snap.hasData || snap.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Text('Start the conversation!',
+                      style: TextStyle(color: Colors.grey)));
+                }
+                final messages = snap.data!.docs;
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(12),
+                  itemCount: messages.length,
+                  itemBuilder: (_, i) {
+                    final m = messages[i].data() as Map<String, dynamic>;
+                    final isMe = m['senderId'] == _currentUserId;
+                    return Align(
+                      alignment: isMe
+                        ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * 0.75),
+                        decoration: BoxDecoration(
+                          color: isMe ? Colors.blue[700] : Colors.grey[200],
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(16),
+                            topRight: const Radius.circular(16),
+                            bottomLeft: Radius.circular(isMe ? 16 : 4),
+                            bottomRight: Radius.circular(isMe ? 4 : 16),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(m['text'] ?? '',
+                              style: TextStyle(
+                                color: isMe ? Colors.white : Colors.black,
+                                fontSize: 15)),
+                            const SizedBox(height: 2),
+                            Text(
+                              _timeAgo(m['timestamp'] as Timestamp?),
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: isMe ? Colors.white70 : Colors.grey[600]),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Colors.grey[200]!)),
+            ),
+            child: SafeArea(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      maxLength: 500,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _send(),
+                      decoration: InputDecoration(
+                        hintText: 'Type a message...',
+                        counterText: '',
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _sending ? null : _send,
+                    icon: _sending
+                      ? const SizedBox(height: 20, width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.send, color: Colors.blue),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\comment_sheet.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+import '../models/comment_model.dart';
+
+class CommentSheet extends StatefulWidget {
+  final String postId;
+  const CommentSheet({super.key, required this.postId});
+
+  @override
+  State<CommentSheet> createState() => _CommentSheetState();
+}
+
+class _CommentSheetState extends State<CommentSheet> {
+  final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+  bool _sending = false;
+
+  Future<void> _send() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty || _sending) return;
+    if (text.length > 100) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Comment must be under 100 characters')));
+      return;
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _sending = true);
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users').doc(user.uid).get();
+      final username = userDoc.data()?['username'] ?? 'Unknown';
+
+      await FirebaseFirestore.instance
+          .collection('posts').doc(widget.postId)
+          .collection('comments').add({
+        'userId': user.uid,
+        'username': username,
+        'text': text,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await FirebaseFirestore.instance
+          .collection('posts').doc(widget.postId)
+          .update({'commentsCount': FieldValue.increment(1)});
+
+      _controller.clear();
+      FocusScope.of(context).unfocus();
+    } catch (_) {}
+    if (mounted) setState(() => _sending = false);
+  }
+
+  String _timeAgo(Timestamp ts) {
+    final diff = DateTime.now().difference(ts.toDate());
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    return DateFormat('MMM d').format(ts.toDate());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Handle
+          Container(
+            margin: const EdgeInsets.only(top: 8, bottom: 8),
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(2)),
+          ),
+          const Text('Comments',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const Divider(),
+
+          // Comments list
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('posts').doc(widget.postId)
+                  .collection('comments')
+                  .orderBy('createdAt', descending: false)
+                  .snapshots(),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (!snap.hasData || snap.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Text('No comments yet. Be the first!',
+                      style: TextStyle(color: Colors.grey)));
+                }
+                final comments = snap.data!.docs
+                    .map((d) => CommentModel.fromDoc(d)).toList();
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(12),
+                  itemCount: comments.length,
+                  itemBuilder: (_, i) {
+                    final c = comments[i];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CircleAvatar(
+                            radius: 16,
+                            backgroundColor: Colors.blue[100],
+                            child: Text(
+                              c.username.isNotEmpty
+                                ? c.username[0].toUpperCase() : '?',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(c.username,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13)),
+                                    const SizedBox(width: 8),
+                                    Text(_timeAgo(c.createdAt),
+                                      style: const TextStyle(
+                                        fontSize: 11, color: Colors.grey)),
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(c.text, style: const TextStyle(fontSize: 14)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+
+          // Input
+          Container(
+            padding: EdgeInsets.only(
+              left: 12, right: 12, top: 8, bottom: bottom + 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Colors.grey[200]!)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    maxLength: 100,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _send(),
+                    decoration: InputDecoration(
+                      hintText: 'Write a comment...',
+                      counterText: '',
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _sending ? null : _send,
+                  icon: _sending
+                    ? const SizedBox(height: 20, width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send, color: Colors.blue),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\contract_screen.dart =====
+import 'package:flutter/material.dart';
+import 'signup_screen.dart';
+
+class ContractScreen extends StatefulWidget {
+  const ContractScreen({super.key});
+  @override
+  State<ContractScreen> createState() => _ContractScreenState();
+}
+
+class _ContractScreenState extends State<ContractScreen> {
+  final ScrollController _scrollController = ScrollController();
+  bool _hasScrolledToBottom = false;
+  bool _agreed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 50) {
+        if (!_hasScrolledToBottom) {
+          setState(() => _hasScrolledToBottom = true);
+        }
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Partnership Contract')),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text('PARTNERSHIP AGREEMENT',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 20),
+                  Text('By using PartnerUp, you agree to the following:',
+                    style: TextStyle(fontSize: 16)),
+                  SizedBox(height: 15),
+                  Text('1. PARTNERSHIP RULE:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text('Once you and another user agree to a partnership by both clicking "PARTNER" in the 15-minute partnership popup, you are entering a binding agreement.',
+                    style: TextStyle(fontSize: 14)),
+                  SizedBox(height: 15),
+                  Text('2. NO BACKING OUT:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text('You cannot cancel or back out of a partnership agreement without the mutual written consent of both parties.',
+                    style: TextStyle(fontSize: 14)),
+                  SizedBox(height: 15),
+                  Text('3. CONSEQUENCES OF VIOLATION:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text('If you back out without mutual agreement, the other party may report you.\n- You will have 48 hours to submit proof of your innocence.\n- If you fail to submit proof, your account will be permanently deleted.\n- Your username will be displayed on the Cheater Board.\n- All your past partners will be notified.',
+                    style: TextStyle(fontSize: 14)),
+                  SizedBox(height: 15),
+                  Text('4. REPORTING:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text('If you believe someone violated this agreement, you must submit proof with your report.',
+                    style: TextStyle(fontSize: 14)),
+                  SizedBox(height: 15),
+                  Text('5. ACCOUNT TERMINATION:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text('PartnerUp reserves the right to terminate any account that violates this agreement without prior notice.',
+                    style: TextStyle(fontSize: 14)),
+                  SizedBox(height: 15),
+                  Text('6. DATA USAGE:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text('Your data will be stored securely and used only for app functionality.',
+                    style: TextStyle(fontSize: 14)),
+                  SizedBox(height: 40),
+                  Text('I have read and agree to the Partnership Contract.',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 60),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Checkbox(
+                      value: _agreed,
+                      onChanged: _hasScrolledToBottom
+                        ? (val) => setState(() => _agreed = val ?? false)
+                        : null,
+                    ),
+                    Expanded(
+                      child: Text(
+                        _hasScrolledToBottom
+                          ? 'I agree to the Partnership Contract'
+                          : 'Scroll to bottom to enable',
+                        style: TextStyle(
+                          color: _hasScrolledToBottom ? Colors.black : Colors.grey),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _agreed ? () {
+                      Navigator.pushReplacement(context,
+                        MaterialPageRoute(builder: (_) => const SignupScreen()));
+                    } : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue[700],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Continue',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\forgot_password_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+class ForgotPasswordScreen extends StatefulWidget {
+  const ForgotPasswordScreen({super.key});
+  @override
+  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+}
+
+class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+  final _emailController = TextEditingController();
+  bool _loading = false;
+  String? _message;
+
+  Future<void> _reset() async {
+    setState(() { _loading = true; _message = null; });
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(
+        email: _emailController.text.trim());
+      setState(() => _message = 'Reset link sent! Check your email.');
+    } on FirebaseAuthException catch (e) {
+      setState(() => _message = e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Forgot Password')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            const SizedBox(height: 40),
+            const Icon(Icons.lock_reset, size: 80, color: Colors.blue),
+            const SizedBox(height: 20),
+            const Text('Reset your password',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            const Text('Enter your email and we will send a reset link',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 30),
+            TextField(
+              controller: _emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: InputDecoration(
+                labelText: 'Email',
+                prefixIcon: const Icon(Icons.email),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            if (_message != null)
+              Text(_message!, textAlign: TextAlign.center,
+                style: TextStyle(color: _message!.contains('sent') ? Colors.green : Colors.red)),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity, height: 50,
+              child: ElevatedButton(
+                onPressed: _loading ? null : _reset,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[700],
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: _loading
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : const Text('Send Reset Link', style: TextStyle(fontSize: 18)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\login_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'contract_screen.dart';
+import 'forgot_password_screen.dart';
+import 'main_feed_screen.dart';
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _loading = false;
+  bool _obscurePassword = true;
+  String? _error;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  // ============ VALIDATORS ============
+  String? _validateEmail(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Email is required';
+    }
+    final emailRegex = RegExp(r'^[\w\.-]+@([\w-]+\.)+[\w-]{2,4}$');
+    if (!emailRegex.hasMatch(value.trim())) {
+      return 'Enter a valid email address';
+    }
+    return null;
+  }
+
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Password is required';
+    }
+    if (value.length < 6) {
+      return 'Password is too short';
+    }
+    return null;
+  }
+
+  // ============ LOGIN ============
+  Future<void> _login() async {
+    FocusScope.of(context).unfocus();
+    setState(() => _error = null);
+
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    setState(() => _loading = true);
+
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.pushReplacement(context,
+        MaterialPageRoute(builder: (_) => const MainFeedScreen()));
+    } on FirebaseAuthException catch (e) {
+      String msg;
+      switch (e.code) {
+        case 'user-not-found':
+          msg = 'No account found with this email.';
+          break;
+        case 'wrong-password':
+          msg = 'Incorrect password. Try again.';
+          break;
+        case 'invalid-email':
+          msg = 'Invalid email address.';
+          break;
+        case 'user-disabled':
+          msg = 'This account has been disabled.';
+          break;
+        case 'too-many-requests':
+          msg = 'Too many failed attempts. Try again later.';
+          break;
+        case 'network-request-failed':
+          msg = 'No internet connection.';
+          break;
+        case 'invalid-credential':
+          msg = 'Invalid email or password.';
+          break;
+        default:
+          msg = e.message ?? 'Login failed. Try again.';
+      }
+      setState(() => _error = msg);
+    } catch (e) {
+      setState(() => _error = 'Something went wrong. Try again.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Form(
+            key: _formKey,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            child: Column(
+              children: [
+                const SizedBox(height: 60),
+                const Icon(Icons.handshake, size: 100, color: Colors.blue),
+                const SizedBox(height: 20),
+                const Text('PartnerUp',
+                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text('Find your perfect partner',
+                  style: TextStyle(fontSize: 16, color: Colors.grey)),
+                const SizedBox(height: 50),
+
+                // Email
+                TextFormField(
+                  controller: _emailController,
+                  validator: _validateEmail,
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: const Icon(Icons.email),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Password
+                TextFormField(
+                  controller: _passwordController,
+                  validator: _validatePassword,
+                  obscureText: _obscurePassword,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _login(),
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: const Icon(Icons.lock),
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscurePassword
+                        ? Icons.visibility_off : Icons.visibility),
+                      onPressed: () => setState(
+                        () => _obscurePassword = !_obscurePassword),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Forgot Password
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.push(context,
+                      MaterialPageRoute(
+                        builder: (_) => const ForgotPasswordScreen())),
+                    child: const Text('Forgot Password?'),
+                  ),
+                ),
+
+                // Error message
+                if (_error != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline,
+                          color: Colors.red, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(_error!,
+                          style: const TextStyle(color: Colors.red))),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 10),
+
+                // Login button
+                SizedBox(
+                  width: double.infinity, height: 50,
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _login,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue[700],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: _loading
+                      ? const SizedBox(
+                          height: 22, width: 22,
+                          child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2.5))
+                      : const Text('Login', style: TextStyle(fontSize: 18)),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                TextButton(
+                  onPressed: () => Navigator.pushReplacement(context,
+                    MaterialPageRoute(builder: (_) => const ContractScreen())),
+                  child: const Text('New here? Sign Up'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\main_feed_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/post_model.dart';
+import '../widgets/post_card.dart';
+import 'splash_screen.dart';
+
+class MainFeedScreen extends StatefulWidget {
+  const MainFeedScreen({super.key});
+  @override
+  State<MainFeedScreen> createState() => _MainFeedScreenState();
+}
+
+class _MainFeedScreenState extends State<MainFeedScreen> {
+  static const int pageSize = 20;
+  final _postController = TextEditingController();
+  final _focusNode = FocusNode();
+  final _scrollController = ScrollController();
+
+  List<PostModel> _posts = [];
+  DocumentSnapshot? _lastDoc;
+  bool _loading = false;
+  bool _hasMore = true;
+  bool _posting = false;
+  int _unreadNotifications = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitial();
+    _listenNotifications();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 300 &&
+        !_loading && _hasMore) {
+      _loadMore();
+    }
+  }
+
+  void _listenNotifications() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    FirebaseFirestore.instance
+        .collection('users').doc(uid)
+        .collection('notifications')
+        .where('isRead', isEqualTo: false)
+        .snapshots()
+        .listen((snap) {
+      if (mounted) setState(() => _unreadNotifications = snap.docs.length);
+    });
+  }
+
+  Future<void> _loadInitial() async {
+    setState(() => _loading = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('posts')
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize)
+          .get();
+
+      _posts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
+      _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : null;
+      _hasMore = snap.docs.length == pageSize;
+      await _saveLastSeen();
+    } catch (_) {}
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _loadMore() async {
+    if (_lastDoc == null || !_hasMore) return;
+    setState(() => _loading = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('posts')
+          .orderBy('createdAt', descending: true)
+          .startAfterDocument(_lastDoc!)
+          .limit(pageSize)
+          .get();
+
+      final newPosts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
+      _posts.addAll(newPosts);
+      if (snap.docs.isNotEmpty) _lastDoc = snap.docs.last;
+      _hasMore = snap.docs.length == pageSize;
+    } catch (_) {}
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _saveLastSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('lastSeen',
+      DateTime.now().millisecondsSinceEpoch);
+  }
+
+  Future<void> _refreshFeed() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastSeen = prefs.getInt('lastSeen') ??
+      DateTime.now().subtract(const Duration(days: 1)).millisecondsSinceEpoch;
+    final lastSeenDate = DateTime.fromMillisecondsSinceEpoch(lastSeen);
+
+    setState(() => _loading = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('posts')
+          .where('createdAt', isGreaterThan: Timestamp.fromDate(lastSeenDate))
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize)
+          .get();
+
+      final newPosts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
+      _posts = newPosts;
+      _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : null;
+      _hasMore = snap.docs.length == pageSize;
+
+      if (newPosts.isEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No new posts since last visit')));
+      }
+      await _saveLastSeen();
+    } catch (_) {}
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _createPost() async {
+    final text = _postController.text.trim();
+    if (text.isEmpty) return;
+    if (text.length > 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post must be under 200 characters')));
+      return;
+    }
+
+    setState(() => _posting = true);
+    try {
+      final user = FirebaseAuth.instance.currentUser!;
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users').doc(user.uid).get();
+      final username = userDoc.data()?['username'] ?? 'Unknown';
+
+      final newDoc = await FirebaseFirestore.instance
+          .collection('posts').add({
+        'userId': user.uid,
+        'username': username,
+        'content': text,
+        'likesCount': 0,
+        'commentsCount': 0,
+        'viewsCount': 0,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      _postController.clear();
+      _focusNode.unfocus();
+
+      final doc = await newDoc.get();
+      setState(() {
+        _posts.insert(0, PostModel.fromDoc(doc));
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post published!')));
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to publish post')));
+    }
+    if (mounted) setState(() => _posting = false);
+  }
+
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout?'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Logout',
+              style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        await FirebaseFirestore.instance
+            .collection('users').doc(uid).update({
+          'isOnline': false,
+          'lastSeenAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (_) {}
+
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const SplashScreen()),
+      (route) => false,
+    );
+  }
+
+  @override
+  void dispose() {
+    _postController.dispose();
+    _focusNode.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('PartnerUp',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Notifications screen coming soon')));
+                },
+              ),
+              if (_unreadNotifications > 0)
+                Positioned(
+                  right: 8, top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.red, shape: BoxShape.circle),
+                    child: Text(
+                      _unreadNotifications > 9 ? '9+' : '$_unreadNotifications',
+                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+            onPressed: _logout,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Post Input
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 4,
+                offset: const Offset(0, 2))],
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _postController,
+                    focusNode: _focusNode,
+                    maxLength: 200,
+                    maxLines: 3,
+                    minLines: 1,
+                    decoration: InputDecoration(
+                      hintText: 'What do you want to partner for?',
+                      counterText: '',
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24)),
+                      filled: true,
+                      fillColor: Colors.grey[100],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _posting
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(height: 20, width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                    )
+                  : IconButton(
+                      onPressed: _createPost,
+                      icon: const Icon(Icons.send, color: Colors.blue),
+                    ),
+              ],
+            ),
+          ),
+
+          // Feed list
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refreshFeed,
+              child: _posts.isEmpty && _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _posts.isEmpty
+                  ? ListView(
+                      children: const [
+                        SizedBox(height: 100),
+                        Center(child: Text('No posts yet. Be the first!',
+                          style: TextStyle(color: Colors.grey))),
+                      ],
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.only(top: 6, bottom: 80),
+                      itemCount: _posts.length + (_hasMore ? 1 : 0),
+                      itemBuilder: (_, i) {
+                        if (i == _posts.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        return PostCard(
+                          post: _posts[i],
+                          onDelete: () => setState(() => _posts.removeAt(i)),
+                        );
+                      },
+                    ),
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          _focusNode.requestFocus();
+          _scrollController.animateTo(0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut);
+        },
+        backgroundColor: Colors.blue[700],
+        child: const Icon(Icons.add, color: Colors.white, size: 30),
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\signup_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'login_screen.dart';
+
+class SignupScreen extends StatefulWidget {
+  const SignupScreen({super.key});
+  @override
+  State<SignupScreen> createState() => _SignupScreenState();
+}
+
+class _SignupScreenState extends State<SignupScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
+  final _usernameController = TextEditingController();
+  bool _loading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirm = true;
+  String? _error;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _confirmController.dispose();
+    _usernameController.dispose();
+    super.dispose();
+  }
+
+  String? _validateUsername(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Username is required';
+    if (value.trim().length < 3) return 'Username must be at least 3 characters';
+    if (value.trim().length > 20) return 'Username must be under 20 characters';
+    if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value.trim())) {
+      return 'Only letters, numbers, and underscore allowed';
+    }
+    return null;
+  }
+
+  String? _validateEmail(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Email is required';
+    final emailRegex = RegExp(r'^[\w\.-]+@([\w-]+\.)+[\w-]{2,4}$');
+    if (!emailRegex.hasMatch(value.trim())) return 'Enter a valid email address';
+    return null;
+  }
+
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) return 'Password is required';
+    if (value.length < 8) return 'Password must be at least 8 characters';
+    if (!value.contains(RegExp(r'[A-Z]'))) return 'Must contain at least 1 uppercase letter';
+    if (!value.contains(RegExp(r'[a-z]'))) return 'Must contain at least 1 lowercase letter';
+    if (!value.contains(RegExp(r'[0-9]'))) return 'Must contain at least 1 number';
+    return null;
+  }
+
+  String? _validateConfirm(String? value) {
+    if (value == null || value.isEmpty) return 'Please confirm your password';
+    if (value != _passwordController.text) return 'Passwords do not match';
+    return null;
+  }
+
+  Future<void> _signup() async {
+    FocusScope.of(context).unfocus();
+    setState(() { _error = null; });
+
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _loading = true);
+    debugPrint('=== SIGNUP START ===');
+
+    try {
+      // STEP 1: Check if username exists
+      debugPrint('STEP 1: Checking username...');
+      final usernameQuery = await FirebaseFirestore.instance
+          .collection('users')
+          .where('username', isEqualTo: _usernameController.text.trim())
+          .limit(1)
+          .get();
+
+      if (usernameQuery.docs.isNotEmpty) {
+        debugPrint('STEP 1 FAILED: Username taken');
+        setState(() {
+          _error = 'Username already taken. Try another.';
+          _loading = false;
+        });
+        return;
+      }
+      debugPrint('STEP 1 OK');
+
+      // STEP 2: Create auth user
+      debugPrint('STEP 2: Creating Firebase Auth user...');
+      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+      debugPrint('STEP 2 OK: UID = ${cred.user!.uid}');
+
+      // STEP 3: Write to Firestore
+      debugPrint('STEP 3: Writing to Firestore...');
+      await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
+        'username': _usernameController.text.trim(),
+        'email': _emailController.text.trim(),
+        'bio': '',
+        'avatarUrl': '',
+        'partnershipCount': 0,
+        'createdAt': FieldValue.serverTimestamp(),
+        'isOnline': true,
+        'isBanned': false,
+        'lastSeenAt': FieldValue.serverTimestamp(),
+      });
+      debugPrint('STEP 3 OK');
+
+      // STEP 4: Send verification email
+      try {
+        await cred.user!.sendEmailVerification();
+        debugPrint('STEP 4 OK: Verification email sent');
+      } catch (e) {
+        debugPrint('STEP 4 WARNING: $e');
+      }
+
+      // STEP 5: Sign out
+      await FirebaseAuth.instance.signOut();
+      debugPrint('STEP 5 OK: Signed out');
+
+      if (!mounted) return;
+      setState(() => _loading = false);
+
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Column(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.green, size: 60),
+              SizedBox(height: 10),
+              Text('Account Created!',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: const Text(
+            'Your PartnerUp account has been created successfully.\n\nPlease login to continue.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[700],
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text('Go to Login',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    } on FirebaseAuthException catch (e) {
+      debugPrint('=== AUTH EXCEPTION ===');
+      debugPrint('Code: ${e.code}');
+      debugPrint('Message: ${e.message}');
+      String msg;
+      switch (e.code) {
+        case 'email-already-in-use':
+          msg = 'This email is already registered. Try logging in.'; break;
+        case 'invalid-email':
+          msg = 'Invalid email address.'; break;
+        case 'weak-password':
+          msg = 'Password is too weak.'; break;
+        case 'network-request-failed':
+          msg = 'No internet connection.'; break;
+        case 'operation-not-allowed':
+          msg = 'Email/Password sign-in is not enabled in Firebase Console.'; break;
+        default:
+          msg = 'Auth error [${e.code}]: ${e.message}';
+      }
+      setState(() => _error = msg);
+    } on FirebaseException catch (e) {
+      debugPrint('=== FIRESTORE EXCEPTION ===');
+      debugPrint('Code: ${e.code}');
+      debugPrint('Message: ${e.message}');
+      String msg;
+      switch (e.code) {
+        case 'permission-denied':
+          msg = 'Firestore permission denied. Check your rules.'; break;
+        case 'unavailable':
+          msg = 'Firestore unavailable. Check internet.'; break;
+        case 'not-found':
+          msg = 'Firestore database not found. Create it in Firebase Console.'; break;
+        default:
+          msg = 'Firestore error [${e.code}]: ${e.message}';
+      }
+      setState(() => _error = msg);
+    } catch (e, stack) {
+      debugPrint('=== UNKNOWN EXCEPTION ===');
+      debugPrint('Type: ${e.runtimeType}');
+      debugPrint('Error: $e');
+      debugPrint('Stack: $stack');
+      setState(() => _error = 'Error: ${e.runtimeType} - $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sign Up')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
+              const Icon(Icons.handshake, size: 80, color: Colors.blue),
+              const SizedBox(height: 20),
+              const Text('Create Account',
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 30),
+
+              TextFormField(
+                controller: _usernameController,
+                validator: _validateUsername,
+                enabled: !_loading,
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
+                  labelText: 'Username',
+                  prefixIcon: const Icon(Icons.person),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _emailController,
+                validator: _validateEmail,
+                enabled: !_loading,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
+                  labelText: 'Email',
+                  hintText: 'you@example.com',
+                  prefixIcon: const Icon(Icons.email),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _passwordController,
+                validator: _validatePassword,
+                enabled: !_loading,
+                obscureText: _obscurePassword,
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  hintText: 'Min 8 chars, 1 upper, 1 lower, 1 number',
+                  prefixIcon: const Icon(Icons.lock),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscurePassword
+                      ? Icons.visibility_off : Icons.visibility),
+                    onPressed: () => setState(
+                      () => _obscurePassword = !_obscurePassword),
+                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _confirmController,
+                validator: _validateConfirm,
+                enabled: !_loading,
+                obscureText: _obscureConfirm,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _signup(),
+                decoration: InputDecoration(
+                  labelText: 'Confirm Password',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscureConfirm
+                      ? Icons.visibility_off : Icons.visibility),
+                    onPressed: () => setState(
+                      () => _obscureConfirm = !_obscureConfirm),
+                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              if (_error != null)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(child: SelectableText(_error!,
+                        style: const TextStyle(color: Colors.red))),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 10),
+
+              SizedBox(
+                width: double.infinity, height: 50,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _signup,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[700],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: _loading
+                    ? const SizedBox(
+                        height: 22, width: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2.5))
+                    : const Text('Sign Up', style: TextStyle(fontSize: 18)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              TextButton(
+                onPressed: () => Navigator.pushReplacement(context,
+                  MaterialPageRoute(builder: (_) => const LoginScreen())),
+                child: const Text('Already have an account? Login'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\splash_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'login_screen.dart';
+import 'main_feed_screen.dart';
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAuth();
+  }
+
+  Future<void> _checkAuth() async {
+    // Small delay so splash shows nicely
+    await Future.delayed(const Duration(milliseconds: 1200));
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      _goToLogin();
+      return;
+    }
+
+    try {
+      // Check if user is banned
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        // User doc missing (deleted) → force logout
+        await FirebaseAuth.instance.signOut();
+        _goToLogin();
+        return;
+      }
+
+      final data = userDoc.data()!;
+      if (data['isBanned'] == true) {
+        await FirebaseAuth.instance.signOut();
+        _goToLogin(message: 'Your account has been banned.');
+        return;
+      }
+
+      // Mark user online
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .update({
+        'isOnline': true,
+        'lastSeenAt': FieldValue.serverTimestamp(),
+      });
+
+      _goToFeed();
+    } catch (_) {
+      // Any error → just go to feed (offline mode still works)
+      _goToFeed();
+    }
+  }
+
+  void _goToLogin({String? message}) {
+    if (!mounted) return;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+    Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()));
+  }
+
+  void _goToFeed() {
+    if (!mounted) return;
+    Navigator.pushReplacement(context,
+      MaterialPageRoute(builder: (_) => const MainFeedScreen()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.blue[700],
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.handshake, size: 100, color: Colors.white),
+            const SizedBox(height: 20),
+            const Text('PartnerUp',
+              style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold,
+                color: Colors.white)),
+            const SizedBox(height: 10),
+            const Text('Find your perfect partner',
+              style: TextStyle(fontSize: 16, color: Colors.white70)),
+            const SizedBox(height: 40),
+            const CircularProgressIndicator(color: Colors.white),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\widgets\post_card.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
+import '../models/post_model.dart';
+import '../screens/comment_sheet.dart';
+import '../screens/chat_screen.dart';
+
+class PostCard extends StatefulWidget {
+  final PostModel post;
+  final VoidCallback? onDelete;
+  const PostCard({super.key, required this.post, this.onDelete});
+
+  @override
+  State<PostCard> createState() => _PostCardState();
+}
+
+class _PostCardState extends State<PostCard> {
+  final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+  bool _isLiked = false;
+  bool _likeLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenLikeStatus();
+  }
+
+  // Listen to the like document in real-time
+  void _listenLikeStatus() {
+    if (currentUserId == null) return;
+    FirebaseFirestore.instance
+        .collection('posts')
+        .doc(widget.post.id)
+        .collection('likes')
+        .doc(currentUserId)
+        .snapshots()
+        .listen((doc) {
+      if (mounted) setState(() => _isLiked = doc.exists);
+    });
+  }
+
+  Future<void> _toggleLike() async {
+    if (currentUserId == null || _likeLoading) return;
+    setState(() => _likeLoading = true);
+
+    final postRef = FirebaseFirestore.instance
+        .collection('posts').doc(widget.post.id);
+    final likeRef = postRef.collection('likes').doc(currentUserId);
+
+    try {
+      if (_isLiked) {
+        await likeRef.delete();
+        await postRef.update({'likesCount': FieldValue.increment(-1)});
+      } else {
+        await likeRef.set({
+          'userId': currentUserId,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+        await postRef.update({'likesCount': FieldValue.increment(1)});
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _likeLoading = false);
+  }
+
+  Future<void> _share() async {
+    await Share.share(
+      '"${widget.post.content}" - ${widget.post.username} on PartnerUp',
+    );
+  }
+
+  void _openComments() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CommentSheet(postId: widget.post.id),
+    );
+  }
+
+  void _openChat() {
+    if (widget.post.userId == currentUserId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("You can't chat with yourself")));
+      return;
+    }
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => ChatScreen(
+        otherUserId: widget.post.userId,
+        otherUsername: widget.post.username,
+      ),
+    ));
+  }
+
+  void _showMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.post.userId == currentUserId)
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('Delete Post',
+                  style: TextStyle(color: Colors.red)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Delete post?'),
+                      content: const Text('This action cannot be undone.'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Cancel')),
+                        TextButton(onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('Delete',
+                            style: TextStyle(color: Colors.red))),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await FirebaseFirestore.instance
+                        .collection('posts')
+                        .doc(widget.post.id).delete();
+                    widget.onDelete?.call();
+                  }
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.share),
+              title: const Text('Share'),
+              onTap: () { Navigator.pop(context); _share(); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.cancel),
+              title: const Text('Cancel'),
+              onTap: () => Navigator.pop(context),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _timeAgo(Timestamp ts) {
+    final diff = DateTime.now().difference(ts.toDate());
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    if (diff.inDays < 7) return '${diff.inDays}d';
+    return DateFormat('MMM d').format(ts.toDate());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // StreamBuilder listens to the post document in real-time
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('posts')
+          .doc(widget.post.id)
+          .snapshots(),
+      builder: (context, snapshot) {
+        // If post was deleted, show nothing (parent will handle)
+        if (snapshot.hasError) {
+          return const SizedBox.shrink();
+        }
+
+        // Use real-time data if available, otherwise fallback to passed post
+        PostModel post;
+        if (snapshot.hasData && snapshot.data!.exists) {
+          post = PostModel.fromDoc(snapshot.data!);
+        } else {
+          post = widget.post;
+        }
+
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundColor: Colors.blue[100],
+                      child: Text(
+                        post.username.isNotEmpty
+                          ? post.username[0].toUpperCase() : '?',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(post.username,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                          Text(_timeAgo(post.createdAt),
+                            style: const TextStyle(
+                              fontSize: 12, color: Colors.grey)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.more_vert),
+                      onPressed: _showMenu,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+
+                // Content
+                Text(post.content,
+                  style: const TextStyle(fontSize: 15, height: 1.4)),
+
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 4),
+
+                // Actions (use post.likesCount / post.commentsCount - real-time!)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _actionBtn(
+                      icon: _isLiked ? Icons.favorite : Icons.favorite_border,
+                      color: _isLiked ? Colors.red : Colors.grey[700]!,
+                      label: '${post.likesCount}',
+                      onTap: _toggleLike,
+                    ),
+                    _actionBtn(
+                      icon: Icons.chat_bubble_outline,
+                      color: Colors.grey[700]!,
+                      label: '${post.commentsCount}',
+                      onTap: _openComments,
+                    ),
+                    _actionBtn(
+                      icon: Icons.share_outlined,
+                      color: Colors.grey[700]!,
+                      label: 'Share',
+                      onTap: _share,
+                    ),
+                    _actionBtn(
+                      icon: Icons.handshake_outlined,
+                      color: Colors.blue[700]!,
+                      label: 'Chat',
+                      onTap: _openChat,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _actionBtn({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 5),
+            Text(label, style: TextStyle(color: color, fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\firebase_options.dart =====
+// File generated by FlutterFire CLI.
+// ignore_for_file: type=lint
+import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+
+/// Default [FirebaseOptions] for use with your Firebase apps.
+///
+/// Example:
+/// ```dart
+/// import 'firebase_options.dart';
+/// // ...
+/// await Firebase.initializeApp(
+///   options: DefaultFirebaseOptions.currentPlatform,
+/// );
+/// ```
+class DefaultFirebaseOptions {
+  static FirebaseOptions get currentPlatform {
+    if (kIsWeb) {
+      return web;
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return android;
+      case TargetPlatform.iOS:
+        return ios;
+      case TargetPlatform.macOS:
+        throw UnsupportedError(
+          'DefaultFirebaseOptions have not been configured for macos - '
+          'you can reconfigure this by running the FlutterFire CLI again.',
+        );
+     case TargetPlatform.windows:
+        return windows;
+      case TargetPlatform.linux:
+        throw UnsupportedError(
+          'DefaultFirebaseOptions have not been configured for linux - '
+          'you can reconfigure this by running the FlutterFire CLI again.',
+        );
+      default:
+        throw UnsupportedError(
+          'DefaultFirebaseOptions are not supported for this platform.',
+        );
+    }
+  }
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyB-uQAUF2wRHUADtqE9fCLRHZl9l8taK3o',
+    appId: '1:15564026221:web:1f7e0c52db2f550422aa64',
+    messagingSenderId: '15564026221',
+    projectId: 'partnerup-2f6a8',
+    authDomain: 'partnerup-2f6a8.firebaseapp.com',
+    storageBucket: 'partnerup-2f6a8.firebasestorage.app',
+    measurementId: 'G-6QNS770NHT',
+  );
+  static const FirebaseOptions android = FirebaseOptions(
+    apiKey: 'AIzaSyAACXi8-oq7JECy4JPwZXRSCqaInUnFUyg',
+    appId: '1:15564026221:android:d9ba1b2a9835db0c22aa64',
+    messagingSenderId: '15564026221',
+    projectId: 'partnerup-2f6a8',
+    storageBucket: 'partnerup-2f6a8.firebasestorage.app',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyCzFN1uBDeJD5wOgFEKlLlzuxYfuhCt-Ak',
+    appId: '1:15564026221:ios:7685d81ff84edeb622aa64',
+    messagingSenderId: '15564026221',
+    projectId: 'partnerup-2f6a8',
+    storageBucket: 'partnerup-2f6a8.firebasestorage.app',
+    iosBundleId: 'com.example.partnerupApp',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyB-uQAUF2wRHUADtqE9fCLRHZl9l8taK3o',
+    appId: '1:15564026221:web:2655d8acbf1c559222aa64',
+    messagingSenderId: '15564026221',
+    projectId: 'partnerup-2f6a8',
+    authDomain: 'partnerup-2f6a8.firebaseapp.com',
+    storageBucket: 'partnerup-2f6a8.firebasestorage.app',
+    measurementId: 'G-67VWWDQ3SF',
+  );
+}
+
+
+// ===== FILE: lib\main.dart =====
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
+import 'screens/splash_screen.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  runApp(const PartnerUpApp());
+}
+
+class PartnerUpApp extends StatelessWidget {
+  const PartnerUpApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'PartnerUp',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: Colors.white,
+        fontFamily: 'Roboto',
+        appBarTheme: AppBarTheme(
+          backgroundColor: Colors.blue[700],
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+      ),
+      home: const SplashScreen(),
+    );
+  }
+}
+
