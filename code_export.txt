@@ -30,6 +30,58 @@ class CommentModel {
 }
 
 
+// ===== FILE: lib\models\partnership_request_model.dart =====
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class PartnershipRequestModel {
+  final String id;
+  final String userA;         // initiator
+  final String userB;         // receiver
+  final String usernameA;
+  final String usernameB;
+  final String postId;        // optional - can be ''
+  final String postContent;   // optional - can be ''
+  final String status;        // pending / accepted / cancelled / expired
+  final bool userAAccepted;
+  final bool userBAccepted;
+  final Timestamp createdAt;
+  final Timestamp expiresAt;
+
+  PartnershipRequestModel({
+    required this.id,
+    required this.userA,
+    required this.userB,
+    required this.usernameA,
+    required this.usernameB,
+    required this.postId,
+    required this.postContent,
+    required this.status,
+    required this.userAAccepted,
+    required this.userBAccepted,
+    required this.createdAt,
+    required this.expiresAt,
+  });
+
+  factory PartnershipRequestModel.fromDoc(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return PartnershipRequestModel(
+      id: doc.id,
+      userA: d['userA'] ?? '',
+      userB: d['userB'] ?? '',
+      usernameA: d['usernameA'] ?? 'Unknown',
+      usernameB: d['usernameB'] ?? 'Unknown',
+      postId: d['postId'] ?? '',
+      postContent: d['postContent'] ?? '',
+      status: d['status'] ?? 'pending',
+      userAAccepted: d['userAAccepted'] ?? false,
+      userBAccepted: d['userBAccepted'] ?? false,
+      createdAt: d['createdAt'] ?? Timestamp.now(),
+      expiresAt: d['expiresAt'] ?? Timestamp.now(),
+    );
+  }
+}
+
+
 // ===== FILE: lib\models\post_model.dart =====
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -85,12 +137,21 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import '../services/partnership_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String otherUserId;
   final String otherUsername;
-  const ChatScreen({super.key, required this.otherUserId,
-    required this.otherUsername});
+  final String? postId;
+  final String? postContent;
+
+  const ChatScreen({
+    super.key,
+    required this.otherUserId,
+    required this.otherUsername,
+    this.postId,
+    this.postContent,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -100,6 +161,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   bool _sending = false;
+  bool _requesting = false;
   late String _chatId;
   late String _currentUserId;
 
@@ -163,6 +225,76 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() => _sending = false);
   }
 
+  Future<void> _proposePartnership() async {
+    if (_requesting) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16)),
+        title: const Text('Propose Partnership?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('You are about to send a partnership request to '
+              '${widget.otherUsername}.'),
+            const SizedBox(height: 12),
+            const Text(
+              'They will have 15 minutes to accept.\n\n'
+              '⚠️ If both accept, you enter a binding agreement.',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green[600],
+              foregroundColor: Colors.white),
+            child: const Text('Send Request'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _requesting = true);
+    try {
+      final myDoc = await FirebaseFirestore.instance
+          .collection('users').doc(_currentUserId).get();
+      final myUsername = myDoc.data()?['username'] ?? 'Unknown';
+
+      await PartnershipService.createRequest(
+        otherUserId: widget.otherUserId,
+        otherUsername: widget.otherUsername,
+        myUsername: myUsername,
+        postId: widget.postId,
+        postContent: widget.postContent,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Request sent!'),
+          backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e'.replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _requesting = false);
+    }
+  }
+
   String _timeAgo(Timestamp? ts) {
     if (ts == null) return '';
     final d = ts.toDate();
@@ -192,24 +324,29 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(widget.otherUsername,
-                  style: const TextStyle(fontSize: 16)),
-                const Text('Online',
-                  style: TextStyle(fontSize: 12, color: Colors.white70)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(widget.otherUsername,
+                    style: const TextStyle(fontSize: 16)),
+                  const Text('Online',
+                    style: TextStyle(fontSize: 12, color: Colors.white70)),
+                ],
+              ),
             ),
           ],
         ),
         actions: [
           TextButton.icon(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Partnership popup coming soon!')));
-            },
-            icon: const Icon(Icons.handshake, color: Colors.white, size: 20),
+            onPressed: _requesting ? null : _proposePartnership,
+            icon: _requesting
+              ? const SizedBox(
+                  height: 16, width: 16,
+                  child: CircularProgressIndicator(
+                    color: Colors.white, strokeWidth: 2))
+              : const Icon(Icons.handshake,
+                  color: Colors.white, size: 20),
             label: const Text('Partnerup',
               style: TextStyle(color: Colors.white, fontSize: 12)),
           ),
@@ -271,7 +408,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               _timeAgo(m['timestamp'] as Timestamp?),
                               style: TextStyle(
                                 fontSize: 10,
-                                color: isMe ? Colors.white70 : Colors.grey[600]),
+                                color: isMe
+                                    ? Colors.white70 : Colors.grey[600]),
                             ),
                           ],
                         ),
@@ -320,6 +458,38 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\cheater_screen.dart =====
+import 'package:flutter/material.dart';
+
+class CheaterScreen extends StatelessWidget {
+  const CheaterScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Cheater Board',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.warning_amber, size: 80, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('Cheater Board Screen',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            SizedBox(height: 8),
+            Text('Coming in Screen 7',
+              style: TextStyle(color: Colors.grey)),
+          ],
+        ),
       ),
     );
   }
@@ -756,12 +926,44 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 }
 
 
+// ===== FILE: lib\screens\leaderboard_screen.dart =====
+import 'package:flutter/material.dart';
+
+class LeaderboardScreen extends StatelessWidget {
+  const LeaderboardScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Leaderboard',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.emoji_events, size: 80, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('Leaderboard Screen',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            SizedBox(height: 8),
+            Text('Coming in Screen 6',
+              style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
 // ===== FILE: lib\screens\login_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'contract_screen.dart';
 import 'forgot_password_screen.dart';
-import 'main_feed_screen.dart';
+import 'main_shell.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -784,36 +986,24 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ============ VALIDATORS ============
   String? _validateEmail(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Email is required';
-    }
+    if (value == null || value.trim().isEmpty) return 'Email is required';
     final emailRegex = RegExp(r'^[\w\.-]+@([\w-]+\.)+[\w-]{2,4}$');
-    if (!emailRegex.hasMatch(value.trim())) {
-      return 'Enter a valid email address';
-    }
+    if (!emailRegex.hasMatch(value.trim())) return 'Enter a valid email address';
     return null;
   }
 
   String? _validatePassword(String? value) {
-    if (value == null || value.isEmpty) {
-      return 'Password is required';
-    }
-    if (value.length < 6) {
-      return 'Password is too short';
-    }
+    if (value == null || value.isEmpty) return 'Password is required';
+    if (value.length < 6) return 'Password is too short';
     return null;
   }
 
-  // ============ LOGIN ============
   Future<void> _login() async {
     FocusScope.of(context).unfocus();
     setState(() => _error = null);
 
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
 
@@ -824,33 +1014,18 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       if (!mounted) return;
       Navigator.pushReplacement(context,
-        MaterialPageRoute(builder: (_) => const MainFeedScreen()));
+        MaterialPageRoute(builder: (_) => const MainShell()));
     } on FirebaseAuthException catch (e) {
       String msg;
       switch (e.code) {
-        case 'user-not-found':
-          msg = 'No account found with this email.';
-          break;
-        case 'wrong-password':
-          msg = 'Incorrect password. Try again.';
-          break;
-        case 'invalid-email':
-          msg = 'Invalid email address.';
-          break;
-        case 'user-disabled':
-          msg = 'This account has been disabled.';
-          break;
-        case 'too-many-requests':
-          msg = 'Too many failed attempts. Try again later.';
-          break;
-        case 'network-request-failed':
-          msg = 'No internet connection.';
-          break;
-        case 'invalid-credential':
-          msg = 'Invalid email or password.';
-          break;
-        default:
-          msg = e.message ?? 'Login failed. Try again.';
+        case 'user-not-found': msg = 'No account found with this email.'; break;
+        case 'wrong-password': msg = 'Incorrect password. Try again.'; break;
+        case 'invalid-email': msg = 'Invalid email address.'; break;
+        case 'user-disabled': msg = 'This account has been disabled.'; break;
+        case 'too-many-requests': msg = 'Too many attempts. Try later.'; break;
+        case 'network-request-failed': msg = 'No internet connection.'; break;
+        case 'invalid-credential': msg = 'Invalid email or password.'; break;
+        default: msg = e.message ?? 'Login failed. Try again.';
       }
       setState(() => _error = msg);
     } catch (e) {
@@ -881,7 +1056,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: TextStyle(fontSize: 16, color: Colors.grey)),
                 const SizedBox(height: 50),
 
-                // Email
                 TextFormField(
                   controller: _emailController,
                   validator: _validateEmail,
@@ -896,7 +1070,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Password
                 TextFormField(
                   controller: _passwordController,
                   validator: _validatePassword,
@@ -918,7 +1091,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // Forgot Password
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
@@ -929,7 +1101,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                // Error message
                 if (_error != null)
                   Container(
                     width: double.infinity,
@@ -951,7 +1122,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 const SizedBox(height: 10),
 
-                // Login button
                 SizedBox(
                   width: double.infinity, height: 50,
                   child: ElevatedButton(
@@ -993,7 +1163,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
-import 'splash_screen.dart';
 
 class MainFeedScreen extends StatefulWidget {
   const MainFeedScreen({super.key});
@@ -1158,44 +1327,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     if (mounted) setState(() => _posting = false);
   }
 
-  Future<void> _logout() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Logout?'),
-        content: const Text('Are you sure you want to logout?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Logout',
-              style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid != null) {
-        await FirebaseFirestore.instance
-            .collection('users').doc(uid).update({
-          'isOnline': false,
-          'lastSeenAt': FieldValue.serverTimestamp(),
-        });
-      }
-    } catch (_) {}
-
-    await FirebaseAuth.instance.signOut();
-    if (!mounted) return;
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const SplashScreen()),
-      (route) => false,
-    );
-  }
-
   @override
   void dispose() {
     _postController.dispose();
@@ -1217,7 +1348,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
                 icon: const Icon(Icons.notifications_outlined),
                 onPressed: () {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Notifications screen coming soon')));
+                    const SnackBar(content: Text('Notifications coming soon')));
                 },
               ),
               if (_unreadNotifications > 0)
@@ -1235,16 +1366,10 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
                 ),
             ],
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: _logout,
-          ),
         ],
       ),
       body: Column(
         children: [
-          // Post Input
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -1289,8 +1414,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
               ],
             ),
           ),
-
-          // Feed list
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refreshFeed,
@@ -1337,6 +1460,494 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
         child: const Icon(Icons.add, color: Colors.white, size: 30),
       ),
     );
+  }
+}
+
+
+// ===== FILE: lib\screens\main_shell.dart =====
+import 'package:flutter/material.dart';
+import 'main_feed_screen.dart';
+import 'search_screen.dart';
+import 'leaderboard_screen.dart';
+import 'cheater_screen.dart';
+import 'profile_screen.dart';
+
+class MainShell extends StatefulWidget {
+  const MainShell({super.key});
+  @override
+  State<MainShell> createState() => _MainShellState();
+}
+
+class _MainShellState extends State<MainShell> {
+  int _currentIndex = 0;
+
+  // Keep all tabs alive using IndexedStack (state preservation)
+  final List<Widget> _tabs = const [
+    MainFeedScreen(),
+    SearchScreen(),
+    LeaderboardScreen(),
+    CheaterScreen(),
+    ProfileScreen(),
+  ];
+
+  void _onTabTapped(int index) {
+    setState(() => _currentIndex = index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _tabs,
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: _onTabTapped,
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: Colors.blue[700],
+        unselectedItemColor: Colors.grey,
+        showUnselectedLabels: true,
+        backgroundColor: Colors.white,
+        elevation: 8,
+        selectedLabelStyle: const TextStyle(
+          fontSize: 11, fontWeight: FontWeight.bold),
+        unselectedLabelStyle: const TextStyle(fontSize: 11),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home_outlined),
+            activeIcon: Icon(Icons.home),
+            label: 'Feed',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.search_outlined),
+            activeIcon: Icon(Icons.search),
+            label: 'Search',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.emoji_events_outlined),
+            activeIcon: Icon(Icons.emoji_events),
+            label: 'Leaderboard',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.warning_amber_outlined),
+            activeIcon: Icon(Icons.warning_amber),
+            label: 'Cheater',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
+            label: 'Profile',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\profile_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'splash_screen.dart';
+import 'settings_screen.dart';
+
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final uid = FirebaseAuth.instance.currentUser?.uid;
+
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout?'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Logout',
+              style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      if (uid != null) {
+        await FirebaseFirestore.instance
+            .collection('users').doc(uid).update({
+          'isOnline': false,
+          'lastSeenAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (_) {}
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const SplashScreen()),
+      (route) => false,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Profile',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen())),
+          ),
+        ],
+      ),
+      body: uid == null
+        ? const Center(child: Text('Not logged in'))
+        : StreamBuilder<DocumentSnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('users').doc(uid).snapshots(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (!snap.hasData || !snap.data!.exists) {
+                return const Center(child: Text('User data not found'));
+              }
+              final data = snap.data!.data() as Map<String, dynamic>;
+              final username = data['username'] ?? 'Unknown';
+              final bio = data['bio'] ?? '';
+              final partnershipCount = data['partnershipCount'] ?? 0;
+              final isOnline = data['isOnline'] ?? false;
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 20),
+                    Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 50,
+                          backgroundColor: Colors.blue[100],
+                          child: Text(
+                            username.isNotEmpty
+                              ? username[0].toUpperCase() : '?',
+                            style: const TextStyle(
+                              fontSize: 40, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        if (isOnline)
+                          Positioned(
+                            right: 5, bottom: 5,
+                            child: Container(
+                              width: 20, height: 20,
+                              decoration: BoxDecoration(
+                                color: Colors.green,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white, width: 3),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(username,
+                      style: const TextStyle(
+                        fontSize: 24, fontWeight: FontWeight.bold)),
+                    if (bio.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(bio,
+                        style: const TextStyle(color: Colors.grey),
+                        textAlign: TextAlign.center),
+                    ],
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _statCard('Partnerships', '$partnershipCount',
+                          Icons.handshake),
+                        _statCard('Posts', '-', Icons.article),
+                        _statCard('Reports', '-', Icons.report),
+                      ],
+                    ),
+                    const SizedBox(height: 30),
+                    _menuTile(Icons.article_outlined, 'My Posts',
+                      () => _showComingSoon(context)),
+                    _menuTile(Icons.handshake_outlined, 'My Partnerships',
+                      () => _showComingSoon(context)),
+                    _menuTile(Icons.description_outlined, 'My Contract',
+                      () => _showComingSoon(context)),
+                    _menuTile(Icons.settings_outlined, 'Settings',
+                      () => Navigator.push(context,
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen()))),
+                    _menuTile(Icons.logout, 'Logout', _logout,
+                      color: Colors.red),
+                    const SizedBox(height: 20),
+                    const Text('Profile features (My Posts, My Partnerships)',
+                      style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    const Text('Coming in Screen 9',
+                      style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  ],
+                ),
+              );
+            },
+          ),
+    );
+  }
+
+  Widget _statCard(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue[50],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: Colors.blue[700], size: 24),
+          const SizedBox(height: 6),
+          Text(value,
+            style: const TextStyle(
+              fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(label, style: const TextStyle(
+            fontSize: 12, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Widget _menuTile(IconData icon, String label, VoidCallback onTap,
+    {Color? color}) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(label,
+        style: TextStyle(color: color, fontWeight: FontWeight.w500)),
+      trailing: color == null
+        ? const Icon(Icons.chevron_right, color: Colors.grey)
+        : null,
+      onTap: onTap,
+    );
+  }
+
+  void _showComingSoon(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Coming in future screens!')));
+  }
+}
+
+
+// ===== FILE: lib\screens\search_screen.dart =====
+import 'package:flutter/material.dart';
+
+class SearchScreen extends StatelessWidget {
+  const SearchScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Search',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search, size: 80, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('Search Screen',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            SizedBox(height: 8),
+            Text('Coming in Screen 5',
+              style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+// ===== FILE: lib\screens\settings_screen.dart =====
+import 'package:flutter/material.dart';
+
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _darkMode = false;
+  bool _showOnlineStatus = true;
+  bool _allowChatFromAnyone = true;
+  bool _notifyLikes = true;
+  bool _notifyComments = true;
+  bool _notifyPartnerships = true;
+  bool _notifyReports = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Settings',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: ListView(
+        children: [
+          _sectionHeader('Account'),
+          ListTile(
+            leading: const Icon(Icons.email_outlined),
+            title: const Text('Change Email'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+          ListTile(
+            leading: const Icon(Icons.lock_outline),
+            title: const Text('Change Password'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+          ListTile(
+            leading: const Icon(Icons.person_outline),
+            title: const Text('Change Username'),
+            subtitle: const Text('Max 1 change per month'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+
+          _sectionHeader('Privacy'),
+          SwitchListTile(
+            secondary: const Icon(Icons.visibility_outlined),
+            title: const Text('Show Online Status'),
+            value: _showOnlineStatus,
+            onChanged: (v) => setState(() => _showOnlineStatus = v),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.chat_outlined),
+            title: const Text('Allow Chat from Anyone'),
+            subtitle: const Text('If off, only partners can chat'),
+            value: _allowChatFromAnyone,
+            onChanged: (v) => setState(() => _allowChatFromAnyone = v),
+          ),
+
+          _sectionHeader('Notifications'),
+          SwitchListTile(
+            secondary: const Icon(Icons.favorite_outline),
+            title: const Text('Likes'),
+            value: _notifyLikes,
+            onChanged: (v) => setState(() => _notifyLikes = v),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.chat_bubble_outline),
+            title: const Text('Comments'),
+            value: _notifyComments,
+            onChanged: (v) => setState(() => _notifyComments = v),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.handshake_outlined),
+            title: const Text('Partnerships'),
+            value: _notifyPartnerships,
+            onChanged: (v) => setState(() => _notifyPartnerships = v),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.report_outlined),
+            title: const Text('Reports'),
+            value: _notifyReports,
+            onChanged: (v) => setState(() => _notifyReports = v),
+          ),
+
+          _sectionHeader('Contract'),
+          ListTile(
+            leading: const Icon(Icons.description_outlined),
+            title: const Text('View My Contract'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Download Contract (PDF)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+
+          _sectionHeader('App'),
+          SwitchListTile(
+            secondary: const Icon(Icons.dark_mode_outlined),
+            title: const Text('Dark Mode'),
+            value: _darkMode,
+            onChanged: (v) => setState(() => _darkMode = v),
+          ),
+          ListTile(
+            leading: const Icon(Icons.language_outlined),
+            title: const Text('Language'),
+            subtitle: const Text('English'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+          ListTile(
+            leading: const Icon(Icons.cleaning_services_outlined),
+            title: const Text('Clear Cache'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Cache cleared!')));
+            },
+          ),
+
+          _sectionHeader('Support'),
+          ListTile(
+            leading: const Icon(Icons.help_outline),
+            title: const Text('Help Center'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+          ListTile(
+            leading: const Icon(Icons.bug_report_outlined),
+            title: const Text('Report a Bug'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+          ListTile(
+            leading: const Icon(Icons.contact_support_outlined),
+            title: const Text('Contact Support'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _comingSoon(),
+          ),
+
+          const SizedBox(height: 30),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+      child: Text(title,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+          color: Colors.blue[700],
+        )),
+    );
+  }
+
+  void _comingSoon() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Coming soon!')));
   }
 }
 
@@ -1813,6 +2424,908 @@ class _SplashScreenState extends State<SplashScreen> {
 }
 
 
+// ===== FILE: lib\services\partnership_service.dart =====
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
+class PartnershipService {
+  static final _db = FirebaseFirestore.instance;
+
+  static Future<String> createRequest({
+    required String otherUserId,
+    required String otherUsername,
+    required String myUsername,
+    String? postId,
+    String? postContent,
+  }) async {
+    final myUid = FirebaseAuth.instance.currentUser!.uid;
+    debugPrint('[Service] createRequest myUid=$myUid other=$otherUserId');
+
+    // Duplicate check (best-effort, ignore errors)
+    try {
+      final existing = await _db.collection('partnershipRequests')
+          .where('status', isEqualTo: 'pending')
+          .where('userA', whereIn: [myUid, otherUserId])
+          .limit(5)
+          .get();
+      for (final doc in existing.docs) {
+        final data = doc.data();
+        final uA = data['userA'] as String?;
+        final uB = data['userB'] as String?;
+        if ((uA == myUid && uB == otherUserId) ||
+            (uA == otherUserId && uB == myUid)) {
+          throw Exception('A partnership request is already pending');
+        }
+      }
+    } catch (e) {
+      debugPrint('[Service] duplicate check: $e');
+    }
+
+    final expiresAt = DateTime.now().add(const Duration(minutes: 15));
+
+    final ref = await _db.collection('partnershipRequests').add({
+      'userA': myUid,
+      'userB': otherUserId,
+      'usernameA': myUsername,
+      'usernameB': otherUsername,
+      'postId': postId ?? '',
+      'postContent': postContent ?? '',
+      'status': 'pending',
+      'userAAccepted': false,
+      'userBAccepted': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(expiresAt),
+    });
+    debugPrint('[Service] createRequest OK ${ref.id}');
+    return ref.id;
+  }
+
+  /// Accept — NO TRANSACTION. Simple read + write.
+  static Future<void> acceptRequest(String requestId) async {
+    final myUid = FirebaseAuth.instance.currentUser!.uid;
+    debugPrint('[Service] acceptRequest $requestId by $myUid');
+
+    final ref = _db.collection('partnershipRequests').doc(requestId);
+
+    // 1. Read current state
+    final snap = await ref.get();
+    if (!snap.exists) throw Exception('Request no longer exists');
+    final data = snap.data()!;
+    if (data['status'] != 'pending') {
+      throw Exception('Request is no longer pending');
+    }
+
+    final userA = data['userA'] as String;
+    final userB = data['userB'] as String;
+
+    final bool aAcc = data['userAAccepted'] ?? false;
+    final bool bAcc = data['userBAccepted'] ?? false;
+
+    final newAAcc = (userA == myUid) ? true : aAcc;
+    final newBAcc = (userB == myUid) ? true : bAcc;
+    final both = newAAcc && newBAcc;
+
+    debugPrint('[Service] aAcc=$aAcc bAcc=$bAcc '
+        'newA=$newAAcc newB=$newBAcc both=$both');
+
+    // 2. Update the request (direct write, no precondition)
+    await ref.update({
+      'userAAccepted': newAAcc,
+      'userBAccepted': newBAcc,
+      if (both) 'status': 'accepted',
+      if (both) 'acceptedAt': FieldValue.serverTimestamp(),
+    });
+    debugPrint('[Service] request updated');
+
+    if (!both) return;
+
+    // 3. Both accepted → create partnership + side effects (independent writes)
+    final pRef = _db.collection('partnerships').doc();
+    try {
+      await pRef.set({
+        'userA': userA,
+        'userB': userB,
+        'usernameA': data['usernameA'] ?? 'User',
+        'usernameB': data['usernameB'] ?? 'User',
+        'postId': data['postId'] ?? '',
+        'postContent': data['postContent'] ?? '',
+        'requestId': requestId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'isActive': true,
+      });
+      debugPrint('[Service] partnership created ${pRef.id}');
+    } catch (e) {
+      debugPrint('[Service] partnership create error: $e');
+    }
+
+    // Increment counts (each is independent, wrapped in try/catch)
+    try {
+      await _db.collection('users').doc(userA).update({
+        'partnershipCount': FieldValue.increment(1),
+      });
+    } catch (e) {
+      debugPrint('[Service] userA count error: $e');
+    }
+    try {
+      await _db.collection('users').doc(userB).update({
+        'partnershipCount': FieldValue.increment(1),
+      });
+    } catch (e) {
+      debugPrint('[Service] userB count error: $e');
+    }
+
+    // Notifications
+    try {
+      await _db.collection('users').doc(userA)
+          .collection('notifications').add({
+        'type': 'partnership_accepted',
+        'title': 'Partnership Confirmed!',
+        'body': 'You are now partnered with ${data['usernameB']}',
+        'data': {'partnershipId': pRef.id},
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[Service] userA notif error: $e');
+    }
+    try {
+      await _db.collection('users').doc(userB)
+          .collection('notifications').add({
+        'type': 'partnership_accepted',
+        'title': 'Partnership Confirmed!',
+        'body': 'You are now partnered with ${data['usernameA']}',
+        'data': {'partnershipId': pRef.id},
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[Service] userB notif error: $e');
+    }
+    debugPrint('[Service] acceptRequest DONE');
+  }
+
+  static Future<void> cancelRequest(String requestId,
+      {String reason = 'cancelled'}) async {
+    final ref = _db.collection('partnershipRequests').doc(requestId);
+    try {
+      final snap = await ref.get();
+      if (!snap.exists) return;
+      final data = snap.data()!;
+      if (data['status'] != 'pending') return;
+
+      await ref.update({
+        'status': 'cancelled',
+        'cancelledAt': FieldValue.serverTimestamp(),
+        'cancelReason': reason,
+      });
+
+      final userA = data['userA'] as String;
+      final userB = data['userB'] as String;
+      final usernameA = data['usernameA'] ?? 'User';
+      final usernameB = data['usernameB'] ?? 'User';
+
+      try {
+        await _db.collection('users').doc(userA)
+            .collection('notifications').add({
+          'type': 'partnership_cancelled',
+          'title': 'Partnership Cancelled',
+          'body': 'Your request with $usernameB was cancelled.',
+          'data': {'requestId': requestId},
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+      try {
+        await _db.collection('users').doc(userB)
+            .collection('notifications').add({
+          'type': 'partnership_cancelled',
+          'title': 'Partnership Cancelled',
+          'body': 'Your request with $usernameA was cancelled.',
+          'data': {'requestId': requestId},
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+    } catch (e) {
+      debugPrint('[Service] cancelRequest error: $e');
+      rethrow;
+    }
+  }
+
+  static Future<void> expireRequest(String requestId) async {
+    final ref = _db.collection('partnershipRequests').doc(requestId);
+    try {
+      final snap = await ref.get();
+      if (!snap.exists) return;
+      if (snap.data()!['status'] != 'pending') return;
+      await ref.update({
+        'status': 'expired',
+        'expiredAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[Service] expireRequest error: $e');
+    }
+  }
+}
+
+
+// ===== FILE: lib\widgets\partnership_listener.dart =====
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'partnership_popup.dart';
+
+class PartnershipListener extends StatefulWidget {
+  final Widget child;
+  const PartnershipListener({super.key, required this.child});
+
+  @override
+  State<PartnershipListener> createState() => _PartnershipListenerState();
+}
+
+class _PartnershipListenerState extends State<PartnershipListener> {
+  String? _activeRequestId;
+  StreamSubscription<QuerySnapshot>? _subA;
+  StreamSubscription<QuerySnapshot>? _subB;
+  StreamSubscription<User?>? _authSub;
+  Timer? _nullDebounce;
+  String? _uid;
+
+  List<QueryDocumentSnapshot> _docsA = [];
+  List<QueryDocumentSnapshot> _docsB = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      _uid = user?.uid;
+      _restart();
+    });
+  }
+
+  void _restart() {
+    _subA?.cancel();
+    _subB?.cancel();
+    _nullDebounce?.cancel();
+    _subA = null;
+    _subB = null;
+    _docsA = [];
+    _docsB = [];
+    _activeRequestId = null;
+
+    final uid = _uid;
+    if (uid == null) return;
+
+    _subA = FirebaseFirestore.instance
+        .collection('partnershipRequests')
+        .where('userA', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      _docsA = snap.docs;
+      _recompute();
+    }, onError: (e) => debugPrint('[PL-A] ERROR: $e'));
+
+    _subB = FirebaseFirestore.instance
+        .collection('partnershipRequests')
+        .where('userB', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      _docsB = snap.docs;
+      _recompute();
+    }, onError: (e) => debugPrint('[PL-B] ERROR: $e'));
+  }
+
+  void _recompute() {
+    String? foundId;
+    for (final doc in _docsA) {
+      final data = doc.data() as Map<String, dynamic>;
+      if (data['status'] == 'pending') {
+        foundId = doc.id;
+        break;
+      }
+    }
+    if (foundId == null) {
+      for (final doc in _docsB) {
+        final data = doc.data() as Map<String, dynamic>;
+        if (data['status'] == 'pending') {
+          foundId = doc.id;
+          break;
+        }
+      }
+    }
+
+    _nullDebounce?.cancel();
+    if (foundId != null) {
+      _setActive(foundId);
+    } else {
+      _nullDebounce = Timer(const Duration(milliseconds: 800), () {
+        if (mounted) _setActive(null);
+      });
+    }
+  }
+
+  void _setActive(String? id) {
+    if (_activeRequestId == id) return;
+    if (mounted) setState(() => _activeRequestId = id);
+  }
+
+  @override
+  void dispose() {
+    _subA?.cancel();
+    _subB?.cancel();
+    _authSub?.cancel();
+    _nullDebounce?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        widget.child,
+        if (_activeRequestId != null)
+          Positioned.fill(
+            child: PartnershipPopup(
+              key: ValueKey(_activeRequestId),
+              requestId: _activeRequestId!,
+              onDismiss: () => _setActive(null),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+
+// ===== FILE: lib\widgets\partnership_popup.dart =====
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../models/partnership_request_model.dart';
+import '../services/partnership_service.dart';
+
+class PartnershipPopup extends StatefulWidget {
+  final String requestId;
+  final VoidCallback onDismiss;
+
+  const PartnershipPopup({
+    super.key,
+    required this.requestId,
+    required this.onDismiss,
+  });
+
+  @override
+  State<PartnershipPopup> createState() => _PartnershipPopupState();
+}
+
+class _PartnershipPopupState extends State<PartnershipPopup> {
+  Timer? _timer;
+  Duration _remaining = const Duration(minutes: 15);
+  bool _processing = false;
+  bool _hasShown = false;
+  bool _successShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer();
+  }
+
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      setState(() {
+        _remaining = _remaining - const Duration(seconds: 1);
+      });
+      if (_remaining.inSeconds <= 0) {
+        t.cancel();
+        _expire();
+      }
+    });
+  }
+
+  Future<void> _expire() async {
+    try {
+      await PartnershipService.expireRequest(widget.requestId);
+    } catch (_) {}
+    if (mounted) widget.onDismiss();
+  }
+
+  Future<void> _accept() async {
+    if (_processing) return;
+    setState(() => _processing = true);
+    try {
+      await PartnershipService.acceptRequest(widget.requestId);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')));
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  Future<void> _cancel() async {
+    if (_processing) return;
+    setState(() => _processing = true);
+    try {
+      await PartnershipService.cancelRequest(widget.requestId,
+        reason: 'cancelled_by_user');
+    } catch (_) {}
+    if (mounted) widget.onDismiss();
+  }
+
+  String _twoDigits(int n) => n.toString().padLeft(2, '0');
+  String _formatDuration(Duration d) {
+    if (d.isNegative) return '00:00';
+    return '${_twoDigits(d.inMinutes)}:${_twoDigits(d.inSeconds % 60)}';
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('partnershipRequests')
+          .doc(widget.requestId)
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return _loadingOverlay();
+        }
+
+        if (!snap.data!.exists) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            if (_hasShown) {
+              debugPrint('[Popup] doc deleted, dismissing');
+              widget.onDismiss();
+            }
+          });
+          return _loadingOverlay();
+        }
+
+        final req = PartnershipRequestModel.fromDoc(snap.data!);
+        _hasShown = true;
+
+        debugPrint('[Popup] status=${req.status} '
+            'A_acc=${req.userAAccepted} B_acc=${req.userBAccepted}');
+
+        // ---- ACCEPTED: Show success dialog once, then dismiss ----
+        if (req.status == 'accepted') {
+          _timer?.cancel();
+          if (!_successShown) {
+            _successShown = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _showSuccessAndDismiss(req);
+            });
+          }
+          // Show a success screen while the dialog is up
+          return _successOverlay();
+        }
+
+        // ---- CANCELLED / EXPIRED: dismiss ----
+        if (req.status == 'cancelled' || req.status == 'expired') {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _timer?.cancel();
+            debugPrint('[Popup] status=${req.status}, dismissing');
+            widget.onDismiss();
+          });
+          return _loadingOverlay();
+        }
+
+        // ---- PENDING: Show role-based UI ----
+        final myUid = FirebaseAuth.instance.currentUser!.uid;
+        final isSender = req.userA == myUid;
+        final myAccepted = isSender ? req.userAAccepted : req.userBAccepted;
+        final otherAccepted = isSender ? req.userBAccepted : req.userAAccepted;
+        final otherUsername = isSender ? req.usernameB : req.usernameA;
+
+        return Material(
+          color: Colors.black.withValues(alpha: 0.85),
+          child: SafeArea(
+            child: Center(
+              child: Container(
+                margin: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: _buildContent(
+                  isSender: isSender,
+                  myAccepted: myAccepted,
+                  otherAccepted: otherAccepted,
+                  otherUsername: otherUsername,
+                  req: req,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _loadingOverlay() {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.85),
+      child: const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _successOverlay() {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.85),
+      child: const Center(
+        child: CircularProgressIndicator(color: Colors.green),
+      ),
+    );
+  }
+
+  Widget _buildContent({
+    required bool isSender,
+    required bool myAccepted,
+    required bool otherAccepted,
+    required String otherUsername,
+    required PartnershipRequestModel req,
+  }) {
+    debugPrint('[Popup] _buildContent isSender=$isSender '
+        'myAccepted=$myAccepted otherAccepted=$otherAccepted');
+
+    if (isSender && !myAccepted && !otherAccepted) {
+      return _waitingForReceiverView(otherUsername, req);
+    }
+    if (!isSender && !myAccepted && !otherAccepted) {
+      return _receiverDecisionView(otherUsername, req);
+    }
+    if (!isSender && myAccepted && !otherAccepted) {
+      return _waitingForSenderView(otherUsername);
+    }
+    if (isSender && !myAccepted && otherAccepted) {
+      return _senderDecisionView(otherUsername);
+    }
+    // Both accepted case is handled in the top-level (accepted status)
+    return _loadingOverlay();
+  }
+
+  Widget _waitingForReceiverView(
+      String otherUsername, PartnershipRequestModel req) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.hourglass_top, size: 60, color: Colors.orange),
+        const SizedBox(height: 12),
+        const Text('PARTNERSHIP REQUEST SENT',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.1)),
+        const SizedBox(height: 16),
+        Text(
+          'Waiting for $otherUsername to respond...',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 15, height: 1.4),
+        ),
+        if (req.postContent.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(req.postContent,
+              style: const TextStyle(fontSize: 13)),
+          ),
+        ],
+        const SizedBox(height: 20),
+        _timerChip(),
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity, height: 48,
+          child: OutlinedButton(
+            onPressed: _processing ? null : _cancel,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.red,
+              side: const BorderSide(color: Colors.red),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Cancel Request',
+              style: TextStyle(
+                fontSize: 15, fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _receiverDecisionView(
+      String otherUsername, PartnershipRequestModel req) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.handshake, size: 60, color: Colors.blue),
+        const SizedBox(height: 12),
+        const Text('PARTNERSHIP REQUEST',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.1)),
+        const SizedBox(height: 16),
+        Text(
+          '$otherUsername wants to partner up with you!',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 15, height: 1.4),
+        ),
+        if (req.postContent.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(req.postContent,
+              style: const TextStyle(fontSize: 13)),
+          ),
+        ],
+        const SizedBox(height: 20),
+        _timerChip(),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _processing ? null : _cancel,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[600],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('DECLINE',
+                    style: TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _processing ? null : _accept,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[600],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: _processing
+                    ? const SizedBox(
+                        height: 20, width: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2))
+                    : const Text('ACCEPT',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _waitingForSenderView(String otherUsername) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.check_circle, size: 60, color: Colors.green),
+        const SizedBox(height: 12),
+        const Text('YOU ACCEPTED',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.1,
+            color: Colors.green)),
+        const SizedBox(height: 16),
+        Text(
+          'Waiting for $otherUsername to confirm...',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 15, height: 1.4),
+        ),
+        const SizedBox(height: 20),
+        _timerChip(),
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity, height: 48,
+          child: OutlinedButton(
+            onPressed: _processing ? null : _cancel,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.red,
+              side: const BorderSide(color: Colors.red),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Cancel Request',
+              style: TextStyle(
+                fontSize: 15, fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _senderDecisionView(String otherUsername) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.check_circle, size: 60, color: Colors.green),
+        const SizedBox(height: 12),
+        Text('$otherUsername ACCEPTED!',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.1,
+            color: Colors.green)),
+        const SizedBox(height: 16),
+        const Text(
+          'Confirm the partnership to finalize.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 15, height: 1.4),
+        ),
+        const SizedBox(height: 20),
+        _timerChip(),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _processing ? null : _cancel,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[600],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('DECLINE',
+                    style: TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _processing ? null : _accept,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[600],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: _processing
+                    ? const SizedBox(
+                        height: 20, width: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2))
+                    : const Text('CONFIRM',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _timerChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      decoration: BoxDecoration(
+        color: _remaining.inSeconds < 60
+            ? Colors.red[50] : Colors.orange[50],
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.timer,
+            color: _remaining.inSeconds < 60
+                ? Colors.red : Colors.orange),
+          const SizedBox(width: 8),
+          Text(
+            _formatDuration(_remaining),
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: _remaining.inSeconds < 60
+                  ? Colors.red : Colors.orange[800],
+              fontFeatures: const [
+                FontFeature.tabularFigures()
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSuccessAndDismiss(PartnershipRequestModel req) {
+    final myUid = FirebaseAuth.instance.currentUser!.uid;
+    final otherUsername = req.userA == myUid
+        ? req.usernameB : req.usernameA;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16)),
+        title: Column(
+          children: const [
+            Icon(Icons.celebration, color: Colors.green, size: 60),
+            SizedBox(height: 10),
+            Text('Partnership Confirmed!',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          'You are now partnered with $otherUsername!',
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity, height: 46,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                widget.onDismiss();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green[600],
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Great!',
+                style: TextStyle(fontSize: 16,
+                  fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
 // ===== FILE: lib\widgets\post_card.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1843,16 +3356,12 @@ class _PostCardState extends State<PostCard> {
     _listenLikeStatus();
   }
 
-  // Listen to the like document in real-time
   void _listenLikeStatus() {
     if (currentUserId == null) return;
     FirebaseFirestore.instance
-        .collection('posts')
-        .doc(widget.post.id)
-        .collection('likes')
-        .doc(currentUserId)
-        .snapshots()
-        .listen((doc) {
+        .collection('posts').doc(widget.post.id)
+        .collection('likes').doc(currentUserId)
+        .snapshots().listen((doc) {
       if (mounted) setState(() => _isLiked = doc.exists);
     });
   }
@@ -1860,11 +3369,9 @@ class _PostCardState extends State<PostCard> {
   Future<void> _toggleLike() async {
     if (currentUserId == null || _likeLoading) return;
     setState(() => _likeLoading = true);
-
     final postRef = FirebaseFirestore.instance
         .collection('posts').doc(widget.post.id);
     final likeRef = postRef.collection('likes').doc(currentUserId);
-
     try {
       if (_isLiked) {
         await likeRef.delete();
@@ -1882,8 +3389,7 @@ class _PostCardState extends State<PostCard> {
 
   Future<void> _share() async {
     await Share.share(
-      '"${widget.post.content}" - ${widget.post.username} on PartnerUp',
-    );
+      '"${widget.post.content}" - ${widget.post.username} on PartnerUp');
   }
 
   void _openComments() {
@@ -1905,6 +3411,8 @@ class _PostCardState extends State<PostCard> {
       builder: (_) => ChatScreen(
         otherUserId: widget.post.userId,
         otherUsername: widget.post.username,
+        postId: widget.post.id,
+        postContent: widget.post.content,
       ),
     ));
   }
@@ -1927,11 +3435,14 @@ class _PostCardState extends State<PostCard> {
                     context: context,
                     builder: (ctx) => AlertDialog(
                       title: const Text('Delete post?'),
-                      content: const Text('This action cannot be undone.'),
+                      content: const Text(
+                        'This action cannot be undone.'),
                       actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false),
+                        TextButton(onPressed: () =>
+                          Navigator.pop(ctx, false),
                           child: const Text('Cancel')),
-                        TextButton(onPressed: () => Navigator.pop(ctx, true),
+                        TextButton(onPressed: () =>
+                          Navigator.pop(ctx, true),
                           child: const Text('Delete',
                             style: TextStyle(color: Colors.red))),
                       ],
@@ -1972,19 +3483,12 @@ class _PostCardState extends State<PostCard> {
 
   @override
   Widget build(BuildContext context) {
-    // StreamBuilder listens to the post document in real-time
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('posts')
-          .doc(widget.post.id)
-          .snapshots(),
+          .collection('posts').doc(widget.post.id).snapshots(),
       builder: (context, snapshot) {
-        // If post was deleted, show nothing (parent will handle)
-        if (snapshot.hasError) {
-          return const SizedBox.shrink();
-        }
+        if (snapshot.hasError) return const SizedBox.shrink();
 
-        // Use real-time data if available, otherwise fallback to passed post
         PostModel post;
         if (snapshot.hasData && snapshot.data!.exists) {
           post = PostModel.fromDoc(snapshot.data!);
@@ -1995,13 +3499,13 @@ class _PostCardState extends State<PostCard> {
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           elevation: 1,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12)),
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header
                 Row(
                   children: [
                     CircleAvatar(
@@ -2034,21 +3538,17 @@ class _PostCardState extends State<PostCard> {
                   ],
                 ),
                 const SizedBox(height: 10),
-
-                // Content
                 Text(post.content,
                   style: const TextStyle(fontSize: 15, height: 1.4)),
-
                 const SizedBox(height: 12),
                 const Divider(height: 1),
                 const SizedBox(height: 4),
-
-                // Actions (use post.likesCount / post.commentsCount - real-time!)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     _actionBtn(
-                      icon: _isLiked ? Icons.favorite : Icons.favorite_border,
+                      icon: _isLiked
+                          ? Icons.favorite : Icons.favorite_border,
                       color: _isLiked ? Colors.red : Colors.grey[700]!,
                       label: '${post.likesCount}',
                       onTap: _toggleLike,
@@ -2194,6 +3694,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
+import 'widgets/partnership_listener.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -2220,6 +3721,11 @@ class PartnerUpApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
+      builder: (context, child) {
+        return PartnershipListener(
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const SplashScreen(),
     );
   }

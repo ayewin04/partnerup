@@ -2,7 +2,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'contract_screen.dart';
 import 'forgot_password_screen.dart';
-import 'main_feed_screen.dart';
+import 'main_shell.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -25,36 +25,24 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ============ VALIDATORS ============
   String? _validateEmail(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Email is required';
-    }
+    if (value == null || value.trim().isEmpty) return 'Email is required';
     final emailRegex = RegExp(r'^[\w\.-]+@([\w-]+\.)+[\w-]{2,4}$');
-    if (!emailRegex.hasMatch(value.trim())) {
-      return 'Enter a valid email address';
-    }
+    if (!emailRegex.hasMatch(value.trim())) return 'Enter a valid email address';
     return null;
   }
 
   String? _validatePassword(String? value) {
-    if (value == null || value.isEmpty) {
-      return 'Password is required';
-    }
-    if (value.length < 6) {
-      return 'Password is too short';
-    }
+    if (value == null || value.isEmpty) return 'Password is required';
+    if (value.length < 6) return 'Password is too short';
     return null;
   }
 
-  // ============ LOGIN ============
   Future<void> _login() async {
     FocusScope.of(context).unfocus();
     setState(() => _error = null);
 
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
 
@@ -65,33 +53,18 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       if (!mounted) return;
       Navigator.pushReplacement(context,
-        MaterialPageRoute(builder: (_) => const MainFeedScreen()));
+        MaterialPageRoute(builder: (_) => const MainShell()));
     } on FirebaseAuthException catch (e) {
       String msg;
       switch (e.code) {
-        case 'user-not-found':
-          msg = 'No account found with this email.';
-          break;
-        case 'wrong-password':
-          msg = 'Incorrect password. Try again.';
-          break;
-        case 'invalid-email':
-          msg = 'Invalid email address.';
-          break;
-        case 'user-disabled':
-          msg = 'This account has been disabled.';
-          break;
-        case 'too-many-requests':
-          msg = 'Too many failed attempts. Try again later.';
-          break;
-        case 'network-request-failed':
-          msg = 'No internet connection.';
-          break;
-        case 'invalid-credential':
-          msg = 'Invalid email or password.';
-          break;
-        default:
-          msg = e.message ?? 'Login failed. Try again.';
+        case 'user-not-found': msg = 'No account found with this email.'; break;
+        case 'wrong-password': msg = 'Incorrect password. Try again.'; break;
+        case 'invalid-email': msg = 'Invalid email address.'; break;
+        case 'user-disabled': msg = 'This account has been disabled.'; break;
+        case 'too-many-requests': msg = 'Too many attempts. Try later.'; break;
+        case 'network-request-failed': msg = 'No internet connection.'; break;
+        case 'invalid-credential': msg = 'Invalid email or password.'; break;
+        default: msg = e.message ?? 'Login failed. Try again.';
       }
       setState(() => _error = msg);
     } catch (e) {
@@ -122,7 +95,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: TextStyle(fontSize: 16, color: Colors.grey)),
                 const SizedBox(height: 50),
 
-                // Email
                 TextFormField(
                   controller: _emailController,
                   validator: _validateEmail,
@@ -137,7 +109,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Password
                 TextFormField(
                   controller: _passwordController,
                   validator: _validatePassword,
@@ -159,7 +130,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // Forgot Password
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
@@ -170,7 +140,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                // Error message
                 if (_error != null)
                   Container(
                     width: double.infinity,
@@ -192,7 +161,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 const SizedBox(height: 10),
 
-                // Login button
                 SizedBox(
                   width: double.infinity, height: 50,
                   child: ElevatedButton(

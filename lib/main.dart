@@ -2,6 +2,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
+import 'widgets/partnership_listener.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +29,11 @@ class PartnerUpApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
+      builder: (context, child) {
+        return PartnershipListener(
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const SplashScreen(),
     );
   }

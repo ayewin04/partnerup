@@ -27,16 +27,12 @@ class _PostCardState extends State<PostCard> {
     _listenLikeStatus();
   }
 
-  // Listen to the like document in real-time
   void _listenLikeStatus() {
     if (currentUserId == null) return;
     FirebaseFirestore.instance
-        .collection('posts')
-        .doc(widget.post.id)
-        .collection('likes')
-        .doc(currentUserId)
-        .snapshots()
-        .listen((doc) {
+        .collection('posts').doc(widget.post.id)
+        .collection('likes').doc(currentUserId)
+        .snapshots().listen((doc) {
       if (mounted) setState(() => _isLiked = doc.exists);
     });
   }
@@ -44,11 +40,9 @@ class _PostCardState extends State<PostCard> {
   Future<void> _toggleLike() async {
     if (currentUserId == null || _likeLoading) return;
     setState(() => _likeLoading = true);
-
     final postRef = FirebaseFirestore.instance
         .collection('posts').doc(widget.post.id);
     final likeRef = postRef.collection('likes').doc(currentUserId);
-
     try {
       if (_isLiked) {
         await likeRef.delete();
@@ -66,8 +60,7 @@ class _PostCardState extends State<PostCard> {
 
   Future<void> _share() async {
     await Share.share(
-      '"${widget.post.content}" - ${widget.post.username} on PartnerUp',
-    );
+      '"${widget.post.content}" - ${widget.post.username} on PartnerUp');
   }
 
   void _openComments() {
@@ -89,6 +82,8 @@ class _PostCardState extends State<PostCard> {
       builder: (_) => ChatScreen(
         otherUserId: widget.post.userId,
         otherUsername: widget.post.username,
+        postId: widget.post.id,
+        postContent: widget.post.content,
       ),
     ));
   }
@@ -111,11 +106,14 @@ class _PostCardState extends State<PostCard> {
                     context: context,
                     builder: (ctx) => AlertDialog(
                       title: const Text('Delete post?'),
-                      content: const Text('This action cannot be undone.'),
+                      content: const Text(
+                        'This action cannot be undone.'),
                       actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false),
+                        TextButton(onPressed: () =>
+                          Navigator.pop(ctx, false),
                           child: const Text('Cancel')),
-                        TextButton(onPressed: () => Navigator.pop(ctx, true),
+                        TextButton(onPressed: () =>
+                          Navigator.pop(ctx, true),
                           child: const Text('Delete',
                             style: TextStyle(color: Colors.red))),
                       ],
@@ -156,19 +154,12 @@ class _PostCardState extends State<PostCard> {
 
   @override
   Widget build(BuildContext context) {
-    // StreamBuilder listens to the post document in real-time
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('posts')
-          .doc(widget.post.id)
-          .snapshots(),
+          .collection('posts').doc(widget.post.id).snapshots(),
       builder: (context, snapshot) {
-        // If post was deleted, show nothing (parent will handle)
-        if (snapshot.hasError) {
-          return const SizedBox.shrink();
-        }
+        if (snapshot.hasError) return const SizedBox.shrink();
 
-        // Use real-time data if available, otherwise fallback to passed post
         PostModel post;
         if (snapshot.hasData && snapshot.data!.exists) {
           post = PostModel.fromDoc(snapshot.data!);
@@ -179,13 +170,13 @@ class _PostCardState extends State<PostCard> {
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           elevation: 1,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12)),
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header
                 Row(
                   children: [
                     CircleAvatar(
@@ -218,21 +209,17 @@ class _PostCardState extends State<PostCard> {
                   ],
                 ),
                 const SizedBox(height: 10),
-
-                // Content
                 Text(post.content,
                   style: const TextStyle(fontSize: 15, height: 1.4)),
-
                 const SizedBox(height: 12),
                 const Divider(height: 1),
                 const SizedBox(height: 4),
-
-                // Actions (use post.likesCount / post.commentsCount - real-time!)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     _actionBtn(
-                      icon: _isLiked ? Icons.favorite : Icons.favorite_border,
+                      icon: _isLiked
+                          ? Icons.favorite : Icons.favorite_border,
                       color: _isLiked ? Colors.red : Colors.grey[700]!,
                       label: '${post.likesCount}',
                       onTap: _toggleLike,
