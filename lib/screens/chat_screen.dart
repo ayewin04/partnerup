@@ -381,8 +381,8 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Text(
                 widget.otherUsername.isNotEmpty
                   ? widget.otherUsername[0].toUpperCase() : '?',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: Theme.of(context).cardColor,
                   fontWeight: FontWeight.bold,
                   fontSize: 14,
                 ),
@@ -420,14 +420,17 @@ class _ChatScreenState extends State<ChatScreen> {
           TextButton.icon(
             onPressed: _requesting ? null : _proposePartnership,
             icon: _requesting
-              ? const SizedBox(
+              ? SizedBox(
                   height: 16, width: 16,
                   child: CircularProgressIndicator(
-                    color: Colors.white, strokeWidth: 2))
-              : const Icon(Icons.handshake,
-                  color: Colors.white, size: 18),
-            label: const Text('Partnerup',
-              style: TextStyle(color: Colors.white, fontSize: 11)),
+                    color: Theme.of(context).cardColor, strokeWidth: 2))
+              : Icon(Icons.handshake,
+                  color: Theme.of(context).cardColor, size: 18),
+            label: Text('Partnerup',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontSize: 11,
+              )),
           ),
         ],
       ),
@@ -577,8 +580,8 @@ class _ChatScreenState extends State<ChatScreen> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: Colors.grey[200]!)),
+              color: Theme.of(context).scaffoldBackgroundColor,
+              border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
             ),
             child: SafeArea(
               child: Row(
@@ -635,14 +638,16 @@ class _ChatScreenState extends State<ChatScreen> {
           padding: const EdgeInsets.symmetric(
             horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
-            color: Colors.grey[200],
+            color: Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF2A2A2A)
+                : Colors.grey[200],
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(label,
             style: TextStyle(
               fontSize: 11,
-              color: Colors.grey[700],
-              fontWeight: FontWeight.w500)),
+              color: Theme.of(context).textTheme.bodySmall?.color,
+              fontWeight: FontWeight.w600)),
         ),
       ),
     );
@@ -692,7 +697,11 @@ class _ChatScreenState extends State<ChatScreen> {
           maxWidth: MediaQuery.of(context).size.width * 0.75,
           minWidth: 60),
         decoration: BoxDecoration(
-          color: isMe ? Colors.blue[700] : Colors.grey[200],
+          color: isMe
+              ? Colors.blue[700]
+              : (Theme.of(context).brightness == Brightness.dark
+                  ? const Color(0xFF2A2A2A)
+                  : Colors.grey[200]),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(16),
             topRight: const Radius.circular(16),
@@ -705,8 +714,14 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Text(item.text,
               style: TextStyle(
-                color: isMe ? Colors.white : Colors.black,
-                fontSize: 15)),
+                color: isMe
+                    ? Colors.white
+                    : (Theme.of(context).brightness == Brightness.dark
+                        ? const Color(0xFFE0E0E0)
+                        : Colors.black87),
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              )),
             const SizedBox(height: 3),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -933,6 +948,11 @@ class _ReportMenuButton extends StatelessWidget {
     );
   }
 }
+
+
+
+
+
 
 
 

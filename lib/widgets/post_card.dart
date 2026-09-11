@@ -310,11 +310,11 @@ class _PostCardState extends State<PostCard> {
                   children: [
                     CircleAvatar(
                       radius: 20,
-                      backgroundColor: Colors.blue[100],
+                      backgroundColor: Colors.blue.withValues(alpha: 0.2),
                       child: Text(
                         post.username.isNotEmpty
                           ? post.username[0].toUpperCase() : '?',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -353,25 +353,25 @@ class _PostCardState extends State<PostCard> {
                     Expanded(child: _actionBtn(
                       icon: _isLiked
                           ? Icons.favorite : Icons.favorite_border,
-                      color: _isLiked ? Colors.red : Colors.grey[700]!,
+                      color: _isLiked ? Colors.red : Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
                       label: '${post.likesCount}',
                       onTap: _toggleLike,
                     )),
                     Expanded(child: _actionBtn(
                       icon: Icons.chat_bubble_outline,
-                      color: Colors.grey[700]!,
+                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
                       label: '${post.commentsCount}',
                       onTap: _openComments,
                     )),
                     Expanded(child: _actionBtn(
                       icon: Icons.visibility_outlined,
-                      color: Colors.grey[700]!,
+                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
                       label: '${post.viewsCount}',
                       onTap: () {},
                     )),
                     Expanded(child: _actionBtn(
                       icon: Icons.share_outlined,
-                      color: Colors.grey[700]!,
+                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
                       label: 'Share',
                       onTap: _share,
                     )),
@@ -421,6 +421,8 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
+
+
 
 
 

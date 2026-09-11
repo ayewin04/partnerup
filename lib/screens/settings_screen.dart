@@ -352,7 +352,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.bold,
-          color: Colors.blue[700],
+          color: Theme.of(context).brightness == Brightness.dark
+              ? Colors.lightBlueAccent
+              : Colors.blue[700],
           letterSpacing: 0.5,
         )),
     );
@@ -375,5 +377,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
+
+
 
 

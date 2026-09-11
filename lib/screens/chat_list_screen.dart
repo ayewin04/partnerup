@@ -74,7 +74,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
               return ListView.separated(
                 itemCount: unique.length,
                 separatorBuilder: (_, __) =>
-                  Divider(height: 1, color: Colors.grey[200]),
+                  Divider(height: 1, color: Theme.of(context).dividerColor),
                 itemBuilder: (context, i) => _ChatRow(
                   chatDoc: unique[i],
                   currentUserId: _currentUserId,
@@ -261,4 +261,6 @@ class _ChatRow extends StatelessWidget {
     return DateFormat('MMM d').format(d);
   }
 }
+
+
 

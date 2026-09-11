@@ -331,7 +331,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Theme.of(context).cardColor,
               boxShadow: [BoxShadow(
                 color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 4,
@@ -354,7 +354,9 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24)),
                       filled: true,
-                      fillColor: Colors.grey[100],
+                      fillColor: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF2A2A2A)
+                          : Colors.grey[100],
                     ),
                   ),
                 ),
@@ -374,9 +376,9 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
           ),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Theme.of(context).cardColor,
               border: Border(
-                bottom: BorderSide(color: Colors.grey[200]!),
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
               ),
             ),
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -459,13 +461,21 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
           children: [
             Icon(icon,
               size: 16,
-              color: selected ? Colors.blue[700] : Colors.grey[700]),
+              color: selected
+              ? (Theme.of(context).brightness == Brightness.dark
+                  ? Colors.lightBlueAccent
+                  : Colors.blue[700])
+              : Theme.of(context).textTheme.bodyMedium?.color),
             const SizedBox(width: 6),
             Text(
               label,
               style: TextStyle(
                 fontSize: 13,
-                color: selected ? Colors.blue[700] : Colors.grey[700],
+                color: selected
+                  ? (Theme.of(context).brightness == Brightness.dark
+                      ? Colors.lightBlueAccent
+                      : Colors.blue[700])
+                  : Theme.of(context).textTheme.bodyMedium?.color,
                 fontWeight: selected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -783,6 +793,8 @@ class _ReportBanner extends StatelessWidget {
     );
   }
 }
+
+
 
 
 

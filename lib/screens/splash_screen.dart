@@ -2,7 +2,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login_screen.dart';
-import 'main_feed_screen.dart';
+import 'main_shell.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -79,7 +79,7 @@ class _SplashScreenState extends State<SplashScreen> {
   void _goToFeed() {
     if (!mounted) return;
     Navigator.pushReplacement(context,
-      MaterialPageRoute(builder: (_) => const MainFeedScreen()));
+      MaterialPageRoute(builder: (_) => const MainShell()));
   }
 
   @override
@@ -106,3 +106,4 @@ class _SplashScreenState extends State<SplashScreen> {
     );
   }
 }
+

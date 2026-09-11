@@ -173,7 +173,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final visual = _visualFor(type);
 
     return Material(
-      color: isRead ? Colors.white : Colors.blue[50],
+      color: isRead
+      ? Theme.of(context).cardColor
+      : (Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF1A2A3A)
+          : Colors.blue[50]),
       child: InkWell(
         onTap: () async {
           if (!isRead) await _markAsRead(doc.id);
@@ -290,7 +294,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.bold,
-          color: Colors.blue[700],
+          color: Theme.of(context).brightness == Brightness.dark
+      ? Colors.lightBlueAccent
+      : Colors.blue[700],
           letterSpacing: 0.5,
         ),
       ),
@@ -375,3 +381,5 @@ class _NotificationVisual {
   final Color color;
   const _NotificationVisual(this.icon, this.color);
 }
+
+

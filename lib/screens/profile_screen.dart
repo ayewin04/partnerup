@@ -167,9 +167,9 @@ class _ProfileScreenState extends State<ProfileScreen>
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         border: Border(
-          bottom: BorderSide(color: Colors.grey[200]!),
+          bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
       ),
       child: Column(
@@ -715,5 +715,7 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_TabBarDelegate oldDelegate) => false;
 }
+
+
 
 
