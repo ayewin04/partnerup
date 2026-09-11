@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'splash_screen.dart';
 import 'activity_screen.dart';
 import 'change_screens.dart';
+import 'blocked_users_screen.dart';
+import 'delete_account_screen.dart';
 import '../services/theme_controller.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -264,6 +266,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ));
             }),
 
+          _sectionHeader('Privacy & Safety'),
+          _menuTile(Icons.block, 'Blocked Users',
+            () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const BlockedUsersScreen())),
+            iconColor: Colors.red),
+
           _sectionHeader('Account Actions'),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
@@ -273,6 +281,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fontWeight: FontWeight.bold,
               )),
             onTap: _logout,
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_forever, color: Colors.red),
+            title: const Text('Delete My Account',
+              style: TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+              )),
+            subtitle: const Text(
+              'Permanently removes all your data',
+              style: TextStyle(fontSize: 11),
+            ),
+            onTap: () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const DeleteAccountScreen())),
           ),
 
           _sectionHeader('Support'),
@@ -338,3 +360,4 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
+

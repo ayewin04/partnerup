@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../services/partnership_service.dart';
 import 'report_sheet.dart';
+import '../services/block_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String otherUserId;
@@ -140,6 +141,35 @@ class _ChatScreenState extends State<ChatScreen> {
         const SnackBar(content: Text('Message too long')));
       return;
     }
+
+    // Block check
+    try {
+      final iBlocked = await BlockService.haveIBlocked(widget.otherUserId);
+      final theyBlocked = await BlockService.hasBlockedMe(widget.otherUserId);
+      if (iBlocked) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You blocked this user. Unblock to send messages.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      if (theyBlocked) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You cannot message this user.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    } catch (e) {
+      debugPrint('[Chat] block check error: $e');
+    }
+
     setState(() => _sending = true);
     try {
       // Add the message
@@ -403,6 +433,62 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          // Block status banner
+          StreamBuilder<bool>(
+            stream: BlockService.haveIBlockedStream(widget.otherUserId),
+            builder: (context, snap) {
+              if (snap.data != true) return const SizedBox.shrink();
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
+                color: Colors.red[50],
+                child: Row(
+                  children: [
+                    const Icon(Icons.block,
+                      color: Colors.red, size: 16),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'You blocked this user. Unblock to send messages.',
+                        style: TextStyle(fontSize: 12, color: Colors.red),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        final c = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Unblock?'),
+                            content: Text(
+                              'Unblock @${widget.otherUsername}?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                  Navigator.pop(ctx, false),
+                                child: const Text('Cancel'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () =>
+                                  Navigator.pop(ctx, true),
+                                child: const Text('Unblock'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (c == true) {
+                          await BlockService.unblockUser(
+                            widget.otherUserId);
+                        }
+                      },
+                      child: const Text('Unblock',
+                        style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -758,23 +844,96 @@ class _ReportMenuButton extends StatelessWidget {
           return const SizedBox.shrink(); // no partnership → no report
         }
 
-        return IconButton(
-          icon: const Icon(Icons.report_outlined,
-            color: Colors.white, size: 20),
-          tooltip: 'Report User',
-          onPressed: () {
-            showModalBottomSheet(
-              context: context,
-              isScrollControlled: true,
-              backgroundColor: Colors.transparent,
-              builder: (_) => ReportSheet(
-                reportedUserId: otherUserId,
-                reportedUsername: otherUsername,
-              ),
-            );
+        return PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert, color: Colors.white),
+          onSelected: (value) async {
+            if (value == 'report') {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => ReportSheet(
+                  reportedUserId: otherUserId,
+                  reportedUsername: otherUsername,
+                ),
+              );
+            } else if (value == 'block') {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Block User?'),
+                  content: Text(
+                    'Block @$otherUsername? They will not be able to '
+                    'message you, and you cannot message them.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Block'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirm != true) return;
+              try {
+                await BlockService.blockUser(
+                  blockedUserId: otherUserId,
+                  blockedUsername: otherUsername,
+                );
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('@$otherUsername blocked'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                Navigator.pop(context);
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error: $e'),
+                    backgroundColor: Colors.red),
+                );
+              }
+            }
           },
+          itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'report',
+              child: Row(
+                children: [
+                  Icon(Icons.report, color: Colors.orange, size: 18),
+                  SizedBox(width: 8),
+                  Text('Report User',
+                    style: TextStyle(color: Colors.orange)),
+                ],
+              ),
+            ),
+            const PopupMenuItem(
+              value: 'block',
+              child: Row(
+                children: [
+                  Icon(Icons.block, color: Colors.red, size: 18),
+                  SizedBox(width: 8),
+                  Text('Block User',
+                    style: TextStyle(color: Colors.red)),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );
   }
 }
+
+
+
+

@@ -6,7 +6,7 @@ import '../models/post_model.dart';
 import '../widgets/post_card.dart';
 import 'splash_screen.dart';
 import 'settings_screen.dart';
-import 'admin_panel_screen.dart';
+import 'admin_dashboard_screen.dart';
 import 'chat_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -255,10 +255,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                   child: OutlinedButton.icon(
                     onPressed: () => Navigator.push(context,
                       MaterialPageRoute(
-                        builder: (_) => const AdminPanelScreen())),
+                        builder: (_) => const AdminDashboardScreen())),
                     icon: const Icon(Icons.admin_panel_settings,
                       color: Colors.deepPurple, size: 18),
-                    label: const Text('Admin Panel',
+                    label: const Text('Admin Dashboard',
                       style: TextStyle(
                         color: Colors.deepPurple,
                         fontWeight: FontWeight.bold,
@@ -715,4 +715,5 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_TabBarDelegate oldDelegate) => false;
 }
+
 
