@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../screens/splash_screen.dart';
 import 'partnership_popup.dart';
 
 class PartnershipListener extends StatefulWidget {
@@ -23,13 +24,68 @@ class _PartnershipListenerState extends State<PartnershipListener> {
   List<QueryDocumentSnapshot> _docsA = [];
   List<QueryDocumentSnapshot> _docsB = [];
 
+  StreamSubscription<DocumentSnapshot>? _userDocSub;
+
   @override
   void initState() {
     super.initState();
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       _uid = user?.uid;
       _restart();
+      _watchUserDoc(user?.uid);
     });
+  }
+
+  /// Watch the current user's doc. If it disappears (account deleted),
+  /// or isBanned is true → force logout.
+  void _watchUserDoc(String? uid) {
+    _userDocSub?.cancel();
+    _userDocSub = null;
+    if (uid == null) return;
+
+    _userDocSub = FirebaseFirestore.instance
+        .collection('users').doc(uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+
+      // Doc missing → account was deleted
+      if (!snap.exists) {
+        debugPrint('[AuthGuard] user doc missing → logout');
+        _forceLogout('Your account has been deleted.');
+        return;
+      }
+
+      // Check banned flag
+      final data = snap.data() as Map<String, dynamic>?;
+      if (data?['isBanned'] == true) {
+        debugPrint('[AuthGuard] user banned → logout');
+        _forceLogout('Your account has been banned.');
+      }
+    }, onError: (e) {
+      debugPrint('[AuthGuard] userDoc error: $e');
+    });
+  }
+
+  Future<void> _forceLogout(String message) async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const SplashScreen()),
+      (route) => false,
+    );
   }
 
   void _restart() {
@@ -104,6 +160,7 @@ class _PartnershipListenerState extends State<PartnershipListener> {
     _subB?.cancel();
     _authSub?.cancel();
     _nullDebounce?.cancel();
+    _userDocSub?.cancel();
     super.dispose();
   }
 
@@ -124,3 +181,4 @@ class _PartnershipListenerState extends State<PartnershipListener> {
     );
   }
 }
+

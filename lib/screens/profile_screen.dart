@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'splash_screen.dart';
 import 'settings_screen.dart';
+import 'admin_panel_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -139,6 +140,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       () => _showComingSoon(context)),
                     _menuTile(Icons.description_outlined, 'My Contract',
                       () => _showComingSoon(context)),
+                    // Admin-only: Admin Panel
+                    if (uid != null)
+                      StreamBuilder<DocumentSnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('admins').doc(uid).snapshots(),
+                        builder: (context, adminSnap) {
+                          if (!adminSnap.hasData ||
+                              !adminSnap.data!.exists) {
+                            return const SizedBox.shrink();
+                          }
+                          return _menuTile(
+                            Icons.admin_panel_settings,
+                            'Admin Panel',
+                            () => Navigator.push(context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const AdminPanelScreen())),
+                            color: Colors.deepPurple,
+                          );
+                        },
+                      ),
                     _menuTile(Icons.settings_outlined, 'Settings',
                       () => Navigator.push(context,
                         MaterialPageRoute(
@@ -197,3 +219,4 @@ class _ProfileScreenState extends State<ProfileScreen> {
       const SnackBar(content: Text('Coming in future screens!')));
   }
 }
+

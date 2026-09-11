@@ -47,6 +47,28 @@ class _CommentSheetState extends State<CommentSheet> {
           .collection('posts').doc(widget.postId)
           .update({'commentsCount': FieldValue.increment(1)});
 
+      try {
+        final postDoc = await FirebaseFirestore.instance
+            .collection('posts').doc(widget.postId).get();
+        final postOwner = postDoc.data()?['userId'];
+        if (postOwner != null && postOwner != user.uid) {
+          await FirebaseFirestore.instance
+              .collection('users').doc(postOwner)
+              .collection('notifications').add({
+            'type': 'comment',
+            'title': '$username commented',
+            'body': text.length > 80
+                ? '${text.substring(0, 80)}...'
+                : text,
+            'data': {'postId': widget.postId},
+            'isRead': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      } catch (e) {
+        debugPrint('[Notif] comment error: $e');
+      }
+
       _controller.clear();
       FocusScope.of(context).unfocus();
     } catch (_) {}
@@ -207,4 +229,5 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
 

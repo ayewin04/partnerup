@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../services/partnership_service.dart';
+import 'report_sheet.dart';
 
 class ChatScreen extends StatefulWidget {
   final String otherUserId;
@@ -379,6 +380,13 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // Report button (only visible if partnered before)
+          _ReportMenuButton(
+            currentUserId: _currentUserId,
+            otherUserId: widget.otherUserId,
+            otherUsername: widget.otherUsername,
+          ),
+          // Partnerup button
           TextButton.icon(
             onPressed: _requesting ? null : _proposePartnership,
             icon: _requesting
@@ -709,3 +717,64 @@ class PartnershipCountLabel extends StatelessWidget {
 
 
 
+
+
+/// Shows a report icon ONLY if the current user has at least 1 partnership
+/// with the other user. Clicking opens the Report Sheet.
+class _ReportMenuButton extends StatelessWidget {
+  final String currentUserId;
+  final String otherUserId;
+  final String otherUsername;
+
+  const _ReportMenuButton({
+    required this.currentUserId,
+    required this.otherUserId,
+    required this.otherUsername,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userA', whereIn: [currentUserId, otherUserId])
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData) return const SizedBox.shrink();
+
+        // Count partnerships between these two users
+        int partnershipCount = 0;
+        for (final doc in snap.data!.docs) {
+          final d = doc.data() as Map<String, dynamic>;
+          final a = d['userA'];
+          final b = d['userB'];
+          if ((a == currentUserId && b == otherUserId) ||
+              (a == otherUserId && b == currentUserId)) {
+            partnershipCount++;
+          }
+        }
+
+        if (partnershipCount == 0) {
+          return const SizedBox.shrink(); // no partnership → no report
+        }
+
+        return IconButton(
+          icon: const Icon(Icons.report_outlined,
+            color: Colors.white, size: 20),
+          tooltip: 'Report User',
+          onPressed: () {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              builder: (_) => ReportSheet(
+                reportedUserId: otherUserId,
+                reportedUsername: otherUsername,
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}

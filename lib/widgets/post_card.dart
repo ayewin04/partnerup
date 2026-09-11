@@ -93,6 +93,28 @@ class _PostCardState extends State<PostCard> {
           'timestamp': FieldValue.serverTimestamp(),
         });
         await postRef.update({'likesCount': FieldValue.increment(1)});
+
+        if (widget.post.userId != currentUserId) {
+          try {
+            final meDoc = await FirebaseFirestore.instance
+                .collection('users').doc(currentUserId).get();
+            final myUsername = meDoc.data()?['username'] ?? 'Someone';
+            await FirebaseFirestore.instance
+                .collection('users').doc(widget.post.userId)
+                .collection('notifications').add({
+              'type': 'like',
+              'title': '$myUsername liked your post',
+              'body': widget.post.content.length > 60
+                  ? '${widget.post.content.substring(0, 60)}...'
+                  : widget.post.content,
+              'data': {'postId': widget.post.id},
+              'isRead': false,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+          } catch (e) {
+            debugPrint('[Notif] like error: $e');
+          }
+        }
       }
     } catch (_) {}
     if (mounted) setState(() => _likeLoading = false);
@@ -167,6 +189,7 @@ class _PostCardState extends State<PostCard> {
                   }
                 },
               ),
+
             ListTile(
               leading: const Icon(Icons.share),
               title: const Text('Share'),
@@ -332,6 +355,9 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
+
+
+
 
 
 

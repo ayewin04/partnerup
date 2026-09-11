@@ -132,6 +132,766 @@ class PostModel {
 }
 
 
+// ===== FILE: lib\screens\admin_panel_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+
+class AdminPanelScreen extends StatefulWidget {
+  const AdminPanelScreen({super.key});
+
+  @override
+  State<AdminPanelScreen> createState() => _AdminPanelScreenState();
+}
+
+class _AdminPanelScreenState extends State<AdminPanelScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final _tabs = ['Pending', 'Under Review', 'Cheater', 'All'];
+  final _statuses = [
+    'pending_proof',
+    'under_review',
+    'cheater',
+    null,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: _tabs.length, vsync: this);
+    _tabController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Row(
+          children: [
+            Icon(Icons.admin_panel_settings, size: 22),
+            SizedBox(width: 8),
+            Text('Admin Panel',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        backgroundColor: Colors.deepPurple,
+        bottom: TabBar(
+          controller: _tabController,
+          isScrollable: true,
+          indicatorColor: Colors.white,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: _tabs.map((t) => Tab(text: t)).toList(),
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: _statuses.map((status) => _buildList(status)).toList(),
+      ),
+    );
+  }
+
+  Widget _buildList(String? status) {
+    // Simple query — no filter, no orderBy → no composite index needed.
+    // We filter + sort in Dart.
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('reports')
+          .limit(500)
+          .snapshots(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snap.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('Error: ${snap.error}',
+                style: const TextStyle(color: Colors.red)),
+            ),
+          );
+        }
+        if (!snap.hasData || snap.data!.docs.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.inbox, size: 60, color: Colors.grey),
+                SizedBox(height: 12),
+                Text('No reports in this category',
+                  style: TextStyle(color: Colors.grey)),
+              ],
+            ),
+          );
+        }
+
+        // ---- FILTER IN DART ----
+        var docs = snap.data!.docs.toList();
+        if (status != null) {
+          docs = docs.where((d) {
+            final data = d.data() as Map<String, dynamic>;
+            return data['status'] == status;
+          }).toList();
+        }
+
+        // ---- SORT IN DART (newest first) ----
+        docs.sort((a, b) {
+          final aData = a.data() as Map<String, dynamic>;
+          final bData = b.data() as Map<String, dynamic>;
+          final ta = aData['createdAt'] as Timestamp?;
+          final tb = bData['createdAt'] as Timestamp?;
+          if (ta == null && tb == null) return 0;
+          if (ta == null) return 1;
+          if (tb == null) return -1;
+          return tb.compareTo(ta);
+        });
+
+        if (docs.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.inbox, size: 60, color: Colors.grey),
+                SizedBox(height: 12),
+                Text('No reports in this category',
+                  style: TextStyle(color: Colors.grey)),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemCount: docs.length,
+          itemBuilder: (_, i) => _reportCard(docs[i]),
+        );
+      },
+    );
+  }
+
+  Widget _reportCard(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final status = data['status'] ?? 'pending_proof';
+    final reporterUsername = data['reporterUsername'] ?? 'Unknown';
+    final reportedUsername = data['reportedUsername'] ?? 'Unknown';
+    final reason = data['reason'] ?? '';
+    final reporterProof = data['reporterProof'] ?? '';
+    final reportedProof = data['reportedProof'] ?? '';
+    final createdAt = data['createdAt'] as Timestamp?;
+    final deadline = data['proofDeadline'] as Timestamp?;
+    final deleteAt = data['deleteAt'] as Timestamp?;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row
+            Row(
+              children: [
+                _statusBadge(status),
+                const Spacer(),
+                if (createdAt != null)
+                  Text(
+                    _timeAgo(createdAt),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Users involved
+            Row(
+              children: [
+                Expanded(
+                  child: _userBlock(
+                    label: 'Reporter',
+                    username: reporterUsername,
+                    color: Colors.blue,
+                  ),
+                ),
+                const Icon(Icons.arrow_forward,
+                  size: 16, color: Colors.grey),
+                Expanded(
+                  child: _userBlock(
+                    label: 'Reported',
+                    username: reportedUsername,
+                    color: Colors.red,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Reason
+            _section('Reason', reason),
+            const SizedBox(height: 8),
+
+            // Reporter proof
+            _section('Reporter Proof', reporterProof),
+            const SizedBox(height: 8),
+
+            // Accused proof
+            if (reportedProof.isNotEmpty)
+              _section('Accused Proof', reportedProof,
+                highlight: true),
+
+            // Deadlines
+            const SizedBox(height: 10),
+            if (status == 'pending_proof' && deadline != null)
+              Row(
+                children: [
+                  const Icon(Icons.timer, size: 14, color: Colors.orange),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Proof deadline: ${_remaining(deadline)}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            if (status == 'cheater' && deleteAt != null)
+              Row(
+                children: [
+                  const Icon(Icons.delete_forever,
+                    size: 14, color: Colors.red),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Account deletion in: ${_remaining(deleteAt)}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 14),
+
+            // Actions
+            _actionRow(doc, status),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _userBlock({
+    required String label,
+    required String username,
+    required Color color,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+          style: TextStyle(
+            fontSize: 10,
+            color: color,
+            fontWeight: FontWeight.bold,
+          )),
+        Text('@$username',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          )),
+      ],
+    );
+  }
+
+  Widget _section(String title, String content,
+      {bool highlight = false}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: highlight ? Colors.green[50] : Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+        border: highlight
+            ? Border.all(color: Colors.green[200]!)
+            : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: highlight
+                  ? Colors.green[800]
+                  : Colors.grey[700],
+            )),
+          const SizedBox(height: 4),
+          Text(content,
+            style: const TextStyle(fontSize: 13, height: 1.4)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusBadge(String status) {
+    Color color;
+    String label;
+    IconData icon;
+
+    switch (status) {
+      case 'pending_proof':
+        color = Colors.orange;
+        label = 'PENDING PROOF';
+        icon = Icons.hourglass_top;
+        break;
+      case 'under_review':
+        color = Colors.blue;
+        label = 'UNDER REVIEW';
+        icon = Icons.search;
+        break;
+      case 'cheater':
+        color = Colors.red;
+        label = 'CHEATER';
+        icon = Icons.warning_amber;
+        break;
+      case 'resolved':
+        color = Colors.green;
+        label = 'RESOLVED';
+        icon = Icons.check_circle;
+        break;
+      case 'deleted':
+        color = Colors.grey;
+        label = 'DELETED';
+        icon = Icons.delete;
+        break;
+      default:
+        color = Colors.grey;
+        label = status.toUpperCase();
+        icon = Icons.help;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color, width: 1.2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: color,
+            )),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionRow(QueryDocumentSnapshot doc, String status) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        if (status == 'pending_proof' || status == 'under_review') ...[
+          _actionBtn(
+            icon: Icons.check_circle,
+            label: 'Resolve',
+            color: Colors.green,
+            onTap: () => _resolve(doc),
+          ),
+          _actionBtn(
+            icon: Icons.warning_amber,
+            label: 'Force Cheater',
+            color: Colors.red,
+            onTap: () => _forceCheater(doc),
+          ),
+          if (status == 'pending_proof')
+            _actionBtn(
+              icon: Icons.timer,
+              label: 'Extend +24h',
+              color: Colors.orange,
+              onTap: () => _extendDeadline(doc),
+            ),
+        ],
+        if (status == 'cheater') ...[
+          _actionBtn(
+            icon: Icons.restore,
+            label: 'Restore',
+            color: Colors.green,
+            onTap: () => _restoreUser(doc),
+          ),
+          _actionBtn(
+            icon: Icons.delete_forever,
+            label: 'Delete Now',
+            color: Colors.red,
+            onTap: () => _deleteNow(doc),
+          ),
+        ],
+        _actionBtn(
+          icon: Icons.delete_outline,
+          label: 'Remove Report',
+          color: Colors.grey,
+          onTap: () => _deleteReport(doc),
+        ),
+      ],
+    );
+  }
+
+  Widget _actionBtn({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color, width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 5),
+            Text(label,
+              style: TextStyle(
+                fontSize: 11,
+                color: color,
+                fontWeight: FontWeight.bold,
+              )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============ ACTIONS ============
+
+  Future<void> _resolve(QueryDocumentSnapshot doc) async {
+    final confirmed = await _confirm(
+      'Resolve Report',
+      'This will mark the report as resolved and clear any cheater status. '
+      'The reported user will not be penalized.',
+    );
+    if (confirmed != true) return;
+
+    final data = doc.data() as Map<String, dynamic>;
+    try {
+      await doc.reference.update({
+        'status': 'resolved',
+        'resolvedAt': FieldValue.serverTimestamp(),
+        'resolvedBy': FirebaseAuth.instance.currentUser?.uid,
+      });
+
+      // Un-ban the reported user if they were marked
+      if (data['reportedId'] != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(data['reportedId'])
+            .update({
+          'isBanned': false,
+          'isCheater': false,
+        }).catchError((_) {});
+      }
+
+      // Notify both parties
+      await _notify(
+        data['reporterId'],
+        'Report resolved',
+        'Your report against @${data['reportedUsername']} has been resolved. '
+        'The user was not penalized.',
+      );
+      await _notify(
+        data['reportedId'],
+        'Report resolved',
+        'The report against you has been resolved. No action will be taken.',
+      );
+
+      _showSnack('Report resolved', Colors.green);
+    } catch (e) {
+      _showSnack('Error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _forceCheater(QueryDocumentSnapshot doc) async {
+    final confirmed = await _confirm(
+      'Force Cheater Status',
+      'This immediately marks the reported user as a cheater. '
+      'They will appear on the Cheater Board and their account will be '
+      'deleted in 36 hours.',
+      confirmColor: Colors.red,
+    );
+    if (confirmed != true) return;
+
+    final data = doc.data() as Map<String, dynamic>;
+    final reportedId = data['reportedId'] as String;
+    final reportedUsername = data['reportedUsername'] as String;
+
+    try {
+      final now = DateTime.now();
+      final deleteAt = now.add(const Duration(hours: 36));
+
+      await doc.reference.update({
+        'status': 'cheater',
+        'cheaterAt': FieldValue.serverTimestamp(),
+        'deleteAt': Timestamp.fromDate(deleteAt),
+        'forcedByAdmin': true,
+      });
+
+      await FirebaseFirestore.instance
+          .collection('users').doc(reportedId).update({
+        'isBanned': true,
+        'isCheater': true,
+      });
+
+      // Notify all past partners
+      await _notifyPartners(reportedId, reportedUsername);
+
+      // Notify reporter
+      await _notify(
+        data['reporterId'],
+        'Report accepted',
+        '@$reportedUsername has been marked as a cheater by admin.',
+      );
+
+      _showSnack('User marked as cheater', Colors.red);
+    } catch (e) {
+      _showSnack('Error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _extendDeadline(QueryDocumentSnapshot doc) async {
+    final confirmed = await _confirm(
+      'Extend Deadline',
+      'Add 24 more hours to the proof deadline?',
+    );
+    if (confirmed != true) return;
+
+    final data = doc.data() as Map<String, dynamic>;
+    final currentDeadline =
+        (data['proofDeadline'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final newDeadline = currentDeadline.add(const Duration(hours: 24));
+
+    try {
+      await doc.reference.update({
+        'proofDeadline': Timestamp.fromDate(newDeadline),
+      });
+      _showSnack('Deadline extended by 24h', Colors.orange);
+    } catch (e) {
+      _showSnack('Error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _restoreUser(QueryDocumentSnapshot doc) async {
+    final confirmed = await _confirm(
+      'Restore User',
+      'This will remove the cheater status and restore the user. '
+      'Use this if the report was a mistake.',
+    );
+    if (confirmed != true) return;
+
+    final data = doc.data() as Map<String, dynamic>;
+    final reportedId = data['reportedId'] as String;
+
+    try {
+      await doc.reference.update({
+        'status': 'resolved',
+        'restoredAt': FieldValue.serverTimestamp(),
+        'restoredByAdmin': true,
+      });
+
+      await FirebaseFirestore.instance
+          .collection('users').doc(reportedId).update({
+        'isBanned': false,
+        'isCheater': false,
+      });
+
+      await _notify(
+        reportedId,
+        'Account restored',
+        'Your cheater status has been removed. You can use the app normally.',
+      );
+
+      _showSnack('User restored', Colors.green);
+    } catch (e) {
+      _showSnack('Error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _deleteNow(QueryDocumentSnapshot doc) async {
+    final confirmed = await _confirm(
+      'Delete Account Now',
+      'This immediately deletes the user account. This cannot be undone.',
+      confirmColor: Colors.red,
+    );
+    if (confirmed != true) return;
+
+    final data = doc.data() as Map<String, dynamic>;
+    final reportedId = data['reportedId'] as String;
+
+    try {
+      await doc.reference.update({
+        'status': 'deleted',
+        'deletedAt': FieldValue.serverTimestamp(),
+        'deletedByAdmin': true,
+      });
+      await FirebaseFirestore.instance
+          .collection('users').doc(reportedId).delete();
+
+      _showSnack('Account deleted', Colors.red);
+    } catch (e) {
+      _showSnack('Error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _deleteReport(QueryDocumentSnapshot doc) async {
+    final confirmed = await _confirm(
+      'Remove Report',
+      'This deletes the report entirely. Use only for spam or abuse.',
+      confirmColor: Colors.grey,
+    );
+    if (confirmed != true) return;
+
+    try {
+      await doc.reference.delete();
+      _showSnack('Report removed', Colors.grey);
+    } catch (e) {
+      _showSnack('Error: $e', Colors.red);
+    }
+  }
+
+  // ============ HELPERS ============
+
+  Future<bool?> _confirm(String title, String body,
+      {Color confirmColor = Colors.blue}) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16)),
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: confirmColor,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _notify(String? uid, String title, String body) async {
+    if (uid == null) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('users').doc(uid)
+          .collection('notifications').add({
+        'type': 'admin_action',
+        'title': title,
+        'body': body,
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _notifyPartners(String cheaterId, String cheaterUsername) async {
+    try {
+      final asA = await FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userA', isEqualTo: cheaterId)
+          .get();
+      final asB = await FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userB', isEqualTo: cheaterId)
+          .get();
+
+      final partnerIds = <String>{};
+      for (final p in asA.docs) {
+        partnerIds.add(p.data()['userB']);
+      }
+      for (final p in asB.docs) {
+        partnerIds.add(p.data()['userA']);
+      }
+      partnerIds.remove(cheaterId);
+
+      for (final pid in partnerIds) {
+        await _notify(
+          pid,
+          'A past partner was flagged',
+          '@$cheaterUsername has been marked as a cheater. '
+          'If you had a partnership with them, review your agreements.',
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _showSnack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: color),
+    );
+  }
+
+  String _timeAgo(Timestamp ts) {
+    final diff = DateTime.now().difference(ts.toDate());
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return DateFormat('MMM d').format(ts.toDate());
+  }
+
+  String _remaining(Timestamp ts) {
+    final diff = ts.toDate().difference(DateTime.now());
+    if (diff.isNegative) return 'expired';
+    if (diff.inHours < 1) return '${diff.inMinutes}m';
+    if (diff.inDays > 0) return '${diff.inDays}d ${diff.inHours % 24}h';
+    return '${diff.inHours}h';
+  }
+}
+
+
+
 // ===== FILE: lib\screens\chat_list_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -291,13 +1051,14 @@ class _ChatRow extends StatelessWidget {
               Expanded(
                 child: Text(
                   username,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: unreadCount > 0
                         ? FontWeight.bold
                         : FontWeight.w500,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               if (lastTime != null)
@@ -397,12 +1158,14 @@ class _ChatRow extends StatelessWidget {
 }
 
 
+
 // ===== FILE: lib\screens\chat_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../services/partnership_service.dart';
+import 'report_sheet.dart';
 
 class ChatScreen extends StatefulWidget {
   final String otherUserId;
@@ -740,28 +1503,38 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leadingWidth: 40,  // tighter back button area
+        titleSpacing: 0,    // no extra gap
         title: Row(
           children: [
             CircleAvatar(
-              radius: 18,
-              backgroundColor: Colors.blue[100],
+              radius: 16,
+              backgroundColor: Colors.white24,
               child: Text(
                 widget.otherUsername.isNotEmpty
                   ? widget.otherUsername[0].toUpperCase() : '?',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(widget.otherUsername,
-                    style: const TextStyle(fontSize: 16),
-                    overflow: TextOverflow.ellipsis),
-                  PartnershipCountLabel(
-                    userA: _currentUserId,
-                    userB: widget.otherUserId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 15)),
+                  Flexible(
+                    child: PartnershipCountLabel(
+                      userA: _currentUserId,
+                      userB: widget.otherUserId,
+                    ),
                   ),
                 ],
               ),
@@ -769,6 +1542,13 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // Report button (only visible if partnered before)
+          _ReportMenuButton(
+            currentUserId: _currentUserId,
+            otherUserId: widget.otherUserId,
+            otherUsername: widget.otherUsername,
+          ),
+          // Partnerup button
           TextButton.icon(
             onPressed: _requesting ? null : _proposePartnership,
             icon: _requesting
@@ -777,9 +1557,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: CircularProgressIndicator(
                     color: Colors.white, strokeWidth: 2))
               : const Icon(Icons.handshake,
-                  color: Colors.white, size: 20),
+                  color: Colors.white, size: 18),
             label: const Text('Partnerup',
-              style: TextStyle(color: Colors.white, fontSize: 12)),
+              style: TextStyle(color: Colors.white, fontSize: 11)),
           ),
         ],
       ),
@@ -985,7 +1765,8 @@ class _ChatScreenState extends State<ChatScreen> {
         margin: const EdgeInsets.symmetric(vertical: 3),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75),
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+          minWidth: 60),
         decoration: BoxDecoration(
           color: isMe ? Colors.blue[700] : Colors.grey[200],
           borderRadius: BorderRadius.only(
@@ -1086,6 +1867,8 @@ class PartnershipCountLabel extends StatelessWidget {
         return Text(
           count == 1 ? '🤝 1 partnership'
               : '🤝 $count partnerships',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 11, color: Colors.white70),
         );
       },
@@ -1096,8 +1879,73 @@ class PartnershipCountLabel extends StatelessWidget {
 
 
 
+
+
+/// Shows a report icon ONLY if the current user has at least 1 partnership
+/// with the other user. Clicking opens the Report Sheet.
+class _ReportMenuButton extends StatelessWidget {
+  final String currentUserId;
+  final String otherUserId;
+  final String otherUsername;
+
+  const _ReportMenuButton({
+    required this.currentUserId,
+    required this.otherUserId,
+    required this.otherUsername,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userA', whereIn: [currentUserId, otherUserId])
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData) return const SizedBox.shrink();
+
+        // Count partnerships between these two users
+        int partnershipCount = 0;
+        for (final doc in snap.data!.docs) {
+          final d = doc.data() as Map<String, dynamic>;
+          final a = d['userA'];
+          final b = d['userB'];
+          if ((a == currentUserId && b == otherUserId) ||
+              (a == otherUserId && b == currentUserId)) {
+            partnershipCount++;
+          }
+        }
+
+        if (partnershipCount == 0) {
+          return const SizedBox.shrink(); // no partnership → no report
+        }
+
+        return IconButton(
+          icon: const Icon(Icons.report_outlined,
+            color: Colors.white, size: 20),
+          tooltip: 'Report User',
+          onPressed: () {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              builder: (_) => ReportSheet(
+                reportedUserId: otherUserId,
+                reportedUsername: otherUsername,
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+
 // ===== FILE: lib\screens\cheater_screen.dart =====
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
 class CheaterScreen extends StatelessWidget {
   const CheaterScreen({super.key});
@@ -1109,23 +1957,276 @@ class CheaterScreen extends StatelessWidget {
         title: const Text('Cheater Board',
           style: TextStyle(fontWeight: FontWeight.bold)),
       ),
-      body: const Center(
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('reports')
+            .limit(500)
+            .snapshots(),
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snap.hasError) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Error loading reports',
+                  style: TextStyle(color: Colors.red)),
+              ),
+            );
+          }
+
+          if (!snap.hasData || snap.data!.docs.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.verified_user,
+                    size: 80, color: Colors.green),
+                  SizedBox(height: 16),
+                  Text('Cheater Board is empty',
+                    style: TextStyle(fontSize: 18, color: Colors.grey)),
+                  SizedBox(height: 8),
+                  Text('No users have been flagged recently.',
+                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+                ],
+              ),
+            );
+          }
+
+          // ---- FILTER IN DART: only cheaters ----
+          final docs = snap.data!.docs.where((d) {
+            final data = d.data() as Map<String, dynamic>;
+            return data['status'] == 'cheater';
+          }).toList();
+
+          if (docs.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.verified_user,
+                    size: 80, color: Colors.green),
+                  SizedBox(height: 16),
+                  Text('Cheater Board is empty',
+                    style: TextStyle(fontSize: 18, color: Colors.grey)),
+                ],
+              ),
+            );
+          }
+
+          // Sort by cheaterAt desc
+          docs.sort((a, b) {
+            final ta = (a.data() as Map<String, dynamic>)['cheaterAt'] as Timestamp?;
+            final tb = (b.data() as Map<String, dynamic>)['cheaterAt'] as Timestamp?;
+            if (ta == null && tb == null) return 0;
+            if (ta == null) return 1;
+            if (tb == null) return -1;
+            return tb.compareTo(ta);
+          });
+
+          return Column(
+            children: [
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red[100]!),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber,
+                      color: Colors.red, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'These users broke the partnership contract. '
+                        'Their accounts will be deleted after 36 hours.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.red[900],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 20),
+                  itemCount: docs.length,
+                  itemBuilder: (_, i) => _cheaterCard(docs[i]),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _cheaterCard(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final reportedUsername = data['reportedUsername'] ?? 'Unknown';
+    final reason = data['reason'] ?? '';
+    final reporterUsername = data['reporterUsername'] ?? 'Unknown';
+    final cheaterAt = data['cheaterAt'] as Timestamp?;
+    final deleteAt = data['deleteAt'] as Timestamp?;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.red[100]!, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.warning_amber, size: 80, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('Cheater Board Screen',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            SizedBox(height: 8),
-            Text('Coming in Screen 7',
-              style: TextStyle(color: Colors.grey)),
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: Colors.red[100],
+                  child: Text(
+                    reportedUsername.isNotEmpty
+                      ? reportedUsername[0].toUpperCase() : '?',
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('@$reportedUsername',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: Colors.red,
+                        )),
+                      if (cheaterAt != null)
+                        Text(
+                          'Flagged ${_timeAgo(cheaterAt)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.red[600],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('CHEATER',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    )),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Reason
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Reason:',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[700],
+                    )),
+                  const SizedBox(height: 4),
+                  Text(reason,
+                    style: const TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            Row(
+              children: [
+                Icon(Icons.person, size: 14, color: Colors.grey[600]),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    'Reported by @$reporterUsername',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            if (deleteAt != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.timer,
+                    size: 14, color: Colors.red),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Account deletes in ${_remaining(deleteAt)}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
     );
   }
+
+  String _timeAgo(Timestamp ts) {
+    final diff = DateTime.now().difference(ts.toDate());
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  String _remaining(Timestamp ts) {
+    final diff = ts.toDate().difference(DateTime.now());
+    if (diff.isNegative) return 'soon';
+    if (diff.inHours < 1) return '${diff.inMinutes}m';
+    return '${diff.inHours}h';
+  }
 }
+
 
 
 // ===== FILE: lib\screens\comment_sheet.dart =====
@@ -1177,6 +2278,28 @@ class _CommentSheetState extends State<CommentSheet> {
       await FirebaseFirestore.instance
           .collection('posts').doc(widget.postId)
           .update({'commentsCount': FieldValue.increment(1)});
+
+      try {
+        final postDoc = await FirebaseFirestore.instance
+            .collection('posts').doc(widget.postId).get();
+        final postOwner = postDoc.data()?['userId'];
+        if (postOwner != null && postOwner != user.uid) {
+          await FirebaseFirestore.instance
+              .collection('users').doc(postOwner)
+              .collection('notifications').add({
+            'type': 'comment',
+            'title': '$username commented',
+            'body': text.length > 80
+                ? '${text.substring(0, 80)}...'
+                : text,
+            'data': {'postId': widget.postId},
+            'isRead': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      } catch (e) {
+        debugPrint('[Notif] comment error: $e');
+      }
 
       _controller.clear();
       FocusScope.of(context).unfocus();
@@ -1268,10 +2391,14 @@ class _CommentSheetState extends State<CommentSheet> {
                               children: [
                                 Row(
                                   children: [
-                                    Text(c.username,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13)),
+                                    Flexible(
+                                      child: Text(c.username,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13)),
+                                    ),
                                     const SizedBox(width: 8),
                                     Text(_timeAgo(c.createdAt),
                                       style: const TextStyle(
@@ -1334,6 +2461,8 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
+
 
 
 // ===== FILE: lib\screens\contract_screen.dart =====
@@ -1560,9 +2689,19 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
 // ===== FILE: lib\screens\leaderboard_screen.dart =====
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'chat_screen.dart';
 
-class LeaderboardScreen extends StatelessWidget {
+class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
+
+  @override
+  State<LeaderboardScreen> createState() => _LeaderboardScreenState();
+}
+
+class _LeaderboardScreenState extends State<LeaderboardScreen> {
+  final _currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
   @override
   Widget build(BuildContext context) {
@@ -1570,19 +2709,363 @@ class LeaderboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Leaderboard',
           style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: () {
+              setState(() {});
+            },
+          ),
+        ],
       ),
-      body: const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      body: StreamBuilder<QuerySnapshot>(
+        // Simple query — no filter, no orderBy → no composite index needed.
+        // We fetch up to 500 users (bigger than top 100) then sort in Dart.
+        stream: FirebaseFirestore.instance
+            .collection('users')
+            .limit(500)
+            .snapshots(),
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snap.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline,
+                      size: 60, color: Colors.red),
+                    const SizedBox(height: 12),
+                    const Text('Failed to load leaderboard',
+                      style: TextStyle(fontSize: 16)),
+                    const SizedBox(height: 8),
+                    Text('${snap.error}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          if (!snap.hasData || snap.data!.docs.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.emoji_events_outlined,
+                    size: 80, color: Colors.grey),
+                  SizedBox(height: 16),
+                  Text('No rankings yet',
+                    style: TextStyle(fontSize: 18, color: Colors.grey)),
+                  SizedBox(height: 8),
+                  Text('Complete partnerships to appear here!',
+                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+                ],
+              ),
+            );
+          }
+
+          // ---- SORT + FILTER IN DART ----
+          final allDocs = snap.data!.docs.where((d) {
+            final data = d.data() as Map<String, dynamic>;
+            // Filter out banned users
+            return data['isBanned'] != true;
+          }).toList();
+
+          // Sort by partnershipCount desc
+          allDocs.sort((a, b) {
+            final aData = a.data() as Map<String, dynamic>;
+            final bData = b.data() as Map<String, dynamic>;
+            final aCount = (aData['partnershipCount'] ?? 0) as int;
+            final bCount = (bData['partnershipCount'] ?? 0) as int;
+            return bCount.compareTo(aCount);
+          });
+
+          // Take top 100
+          final users = allDocs.take(100).toList();
+
+          // Find my rank in top 100
+          int? myRank;
+          for (int i = 0; i < users.length; i++) {
+            if (users[i].id == _currentUserId) {
+              myRank = i + 1;
+              break;
+            }
+          }
+
+          // If not in top 100, compute my rank among all users
+          int? myGlobalRank;
+          if (myRank == null && _currentUserId != null) {
+            final myIndex = allDocs.indexWhere(
+                (d) => d.id == _currentUserId);
+            if (myIndex >= 0) {
+              myGlobalRank = myIndex + 1;
+            }
+          }
+
+          return Column(
+            children: [
+              _myRankBanner(myRank, myGlobalRank, users),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.only(
+                    top: 4, bottom: 20),
+                  itemCount: users.length,
+                  itemBuilder: (context, i) {
+                    final doc = users[i];
+                    final rank = i + 1;
+                    final data = doc.data() as Map<String, dynamic>;
+                    return _leaderboardRow(
+                      rank: rank,
+                      uid: doc.id,
+                      username: data['username'] ?? 'Unknown',
+                      partnershipCount:
+                          data['partnershipCount'] ?? 0,
+                      isOnline: data['isOnline'] == true,
+                      isMe: doc.id == _currentUserId,
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ---- My rank banner ----
+  Widget _myRankBanner(int? myRank, int? myGlobalRank,
+      List<QueryDocumentSnapshot> users) {
+    if (_currentUserId == null) return const SizedBox.shrink();
+
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users').doc(_currentUserId).snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData || !snap.data!.exists) {
+          return const SizedBox.shrink();
+        }
+        final data = snap.data!.data() as Map<String, dynamic>;
+        final myCount = data['partnershipCount'] ?? 0;
+
+        String rankText;
+        if (myRank != null) {
+          rankText = 'Your rank: #$myRank';
+        } else if (myGlobalRank != null) {
+          rankText = 'Your rank: #$myGlobalRank';
+        } else {
+          rankText = 'Your rank: not ranked yet';
+        }
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.blue[100]!),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.person, color: Colors.blue, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(rankText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    Text('🤝 $myCount partnerships',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue[700],
+                      )),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ---- Row renderer ----
+  Widget _leaderboardRow({
+    required int rank,
+    required String uid,
+    required String username,
+    required int partnershipCount,
+    required bool isOnline,
+    required bool isMe,
+  }) {
+    return InkWell(
+      onTap: () {
+        if (isMe) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("You can't chat with yourself")));
+          return;
+        }
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            otherUserId: uid,
+            otherUsername: username,
+          ),
+        ));
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(
+          horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMe ? Colors.blue[50] : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isMe ? Colors.blue : Colors.grey[200]!,
+            width: isMe ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
           children: [
-            Icon(Icons.emoji_events, size: 80, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('Leaderboard Screen',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            SizedBox(height: 8),
-            Text('Coming in Screen 6',
-              style: TextStyle(color: Colors.grey)),
+            SizedBox(
+              width: 40,
+              child: _rankBadge(rank),
+            ),
+            const SizedBox(width: 10),
+
+            Stack(
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: Colors.blue[100],
+                  child: Text(
+                    username.isNotEmpty
+                      ? username[0].toUpperCase() : '?',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue[800],
+                    ),
+                  ),
+                ),
+                if (isOnline)
+                  Positioned(
+                    right: 0, bottom: 0,
+                    child: Container(
+                      width: 12, height: 12,
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white, width: 2),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 10),
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    isMe ? '$username (You)' : username,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '🤝 $partnershipCount partnership${partnershipCount == 1 ? '' : 's'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+
+            if (!isMe)
+              IconButton(
+                icon: const Icon(Icons.chat_bubble_outline,
+                  color: Colors.blue, size: 20),
+                tooltip: 'Chat',
+                onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => ChatScreen(
+                    otherUserId: uid,
+                    otherUsername: username,
+                  )),
+                ),
+              )
+            else
+              const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.star,
+                  color: Colors.amber, size: 20),
+              ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _rankBadge(int rank) {
+    if (rank == 1) {
+      return const Center(child: Text('🥇',
+        style: TextStyle(fontSize: 24)));
+    }
+    if (rank == 2) {
+      return const Center(child: Text('🥈',
+        style: TextStyle(fontSize: 24)));
+    }
+    if (rank == 3) {
+      return const Center(child: Text('🥉',
+        style: TextStyle(fontSize: 24)));
+    }
+
+    return Center(
+      child: Container(
+        width: 32, height: 32,
+        decoration: BoxDecoration(
+          color: rank <= 10 ? Colors.blue[50] : Colors.grey[100],
+          shape: BoxShape.circle,
+        ),
+        child: Center(
+          child: Text(
+            '#$rank',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: rank <= 10 ? Colors.blue[700] : Colors.grey[700],
+            ),
+          ),
         ),
       ),
     );
@@ -1797,6 +3280,8 @@ import 'dart:math';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
 import 'chat_list_screen.dart';
+import 'notifications_screen.dart';
+import '../services/report_service.dart';
 
 enum FeedFilter { newest, mostInteracted, random }
 
@@ -1826,6 +3311,19 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     _loadFeed(reset: true);
     _listenNotifications();
     _scrollController.addListener(_onScroll);
+
+    // ---- Only ADMINs process deadlines (prevents any user from banning others) ----
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      try {
+        final adminDoc = await FirebaseFirestore.instance
+            .collection('admins').doc(uid).get();
+        if (adminDoc.exists) {
+          ReportService.processDeadlines();
+        }
+      } catch (_) {}
+    });
   }
 
   void _onScroll() {
@@ -2079,10 +3577,9 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Notifications coming soon')));
-                },
+                onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationsScreen())),
               ),
               if (_unreadNotifications > 0)
                 Positioned(
@@ -2103,6 +3600,8 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
       ),
       body: Column(
         children: [
+          // Report banner (if user has an active report against them)
+          _ReportBanner(currentUserId: FirebaseAuth.instance.currentUser?.uid),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -2357,6 +3856,212 @@ class ChatIconWithBadge extends StatelessWidget {
 
 
 
+/// Shows a banner if the current user has an active report against them.
+class _ReportBanner extends StatelessWidget {
+  final String? currentUserId;
+  const _ReportBanner({required this.currentUserId});
+
+  @override
+  Widget build(BuildContext context) {
+    if (currentUserId == null) return const SizedBox.shrink();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('reports')
+          .where('reportedId', isEqualTo: currentUserId)
+          .limit(10)
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData || snap.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        // Filter for pending_proof in Dart
+        final pendingDocs = snap.data!.docs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          return data['status'] == 'pending_proof';
+        }).toList();
+        if (pendingDocs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final doc = pendingDocs.first;
+        final data = doc.data() as Map<String, dynamic>;
+        final deadline = (data['proofDeadline'] as Timestamp?)?.toDate();
+        final reporter = data['reporterUsername'] ?? 'a user';
+
+        String timeLeft = '';
+        if (deadline != null) {
+          final diff = deadline.difference(DateTime.now());
+          if (diff.isNegative) {
+            timeLeft = 'expired';
+          } else if (diff.inHours > 0) {
+            timeLeft = '${diff.inHours}h left';
+          } else {
+            timeLeft = '${diff.inMinutes}m left';
+          }
+        }
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.orange[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.orange[300]!, width: 2),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.warning_amber,
+                    color: Colors.orange, size: 24),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'You have been reported by @$reporter',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Submit proof of your innocence. '
+                'Time remaining: $timeLeft',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.orange[900],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showProofDialog(context, doc.id),
+                      icon: const Icon(Icons.upload, size: 16),
+                      label: const Text('Submit Proof',
+                        style: TextStyle(fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange[700],
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showProofDialog(BuildContext context, String reportId) {
+    final controller = TextEditingController();
+    bool submitting = false;
+    String? error;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+          title: const Text('Submit Your Proof'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Explain your side of the story. Include any chat '
+                'excerpts, dates, or facts that prove your innocence.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLength: 500,
+                maxLines: 5,
+                minLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Your proof...',
+                  errorText: error,
+                  counterText: '',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: submitting
+                  ? null
+                  : () async {
+                      final proof = controller.text.trim();
+                      if (proof.length < 10) {
+                        setDialogState(() =>
+                          error = 'Proof must be at least 10 characters');
+                        return;
+                      }
+                      setDialogState(() => submitting = true);
+                      try {
+                        await ReportService.submitProof(
+                          reportId: reportId,
+                          proof: proof,
+                        );
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(
+                            content: Text('Proof submitted'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } catch (e) {
+                        setDialogState(() {
+                          error = '$e'.replaceFirst('Exception: ', '');
+                          submitting = false;
+                        });
+                      }
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange[700],
+                foregroundColor: Colors.white,
+              ),
+              child: submitting
+                ? const SizedBox(
+                    height: 18, width: 18,
+                    child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2))
+                : const Text('Submit'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+
+
+
 // ===== FILE: lib\screens\main_shell.dart =====
 import 'package:flutter/material.dart';
 import 'main_feed_screen.dart';
@@ -2439,12 +4144,393 @@ class _MainShellState extends State<MainShell> {
 }
 
 
+// ===== FILE: lib\screens\notifications_screen.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+import 'chat_screen.dart';
+
+class NotificationsScreen extends StatefulWidget {
+  const NotificationsScreen({super.key});
+
+  @override
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
+}
+
+class _NotificationsScreenState extends State<NotificationsScreen> {
+  final _currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_currentUserId == null) {
+      return const Scaffold(
+        body: Center(child: Text('Not logged in')),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifications',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          // Mark all as read
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('users').doc(_currentUserId)
+                .collection('notifications')
+                .where('isRead', isEqualTo: false)
+                .snapshots(),
+            builder: (context, snap) {
+              final unread = snap.data?.docs.length ?? 0;
+              if (unread == 0) return const SizedBox.shrink();
+              return TextButton.icon(
+                onPressed: () => _markAllAsRead(unread),
+                icon: const Icon(Icons.done_all,
+                  color: Colors.white, size: 18),
+                label: const Text('Mark all read',
+                  style: TextStyle(
+                    color: Colors.white, fontSize: 12)),
+              );
+            },
+          ),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('users').doc(_currentUserId)
+            .collection('notifications')
+            .orderBy('createdAt', descending: true)
+            .limit(100)
+            .snapshots(),
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snap.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text('Error: ${snap.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red)),
+              ),
+            );
+          }
+
+          if (!snap.hasData || snap.data!.docs.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.notifications_none,
+                    size: 80, color: Colors.grey),
+                  SizedBox(height: 16),
+                  Text('No notifications yet',
+                    style: TextStyle(fontSize: 18, color: Colors.grey)),
+                  SizedBox(height: 8),
+                  Text('We\'ll notify you about partnerships, likes, and more.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+                ],
+              ),
+            );
+          }
+
+          final docs = snap.data!.docs;
+
+          // Group by date
+          final grouped = <String, List<QueryDocumentSnapshot>>{};
+          for (final doc in docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            final ts = data['createdAt'] as Timestamp?;
+            final label = ts != null ? _dateGroupLabel(ts) : 'Earlier';
+            grouped.putIfAbsent(label, () => []).add(doc);
+          }
+
+          // Build flat list with headers
+          final items = <Widget>[];
+          for (final entry in grouped.entries) {
+            items.add(_sectionHeader(entry.key));
+            for (final doc in entry.value) {
+              items.add(_notificationRow(doc));
+            }
+          }
+
+          return ListView(
+            padding: const EdgeInsets.only(bottom: 20),
+            children: items,
+          );
+        },
+      ),
+    );
+  }
+
+  // ============ MARK ALL AS READ ============
+  Future<void> _markAllAsRead(int count) async {
+    try {
+      final unread = await FirebaseFirestore.instance
+          .collection('users').doc(_currentUserId)
+          .collection('notifications')
+          .where('isRead', isEqualTo: false)
+          .get();
+
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in unread.docs) {
+        batch.update(doc.reference, {'isRead': true});
+      }
+      await batch.commit();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Marked $count as read'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[Notif] mark all error: $e');
+    }
+  }
+
+  // ============ MARK SINGLE AS READ ============
+  Future<void> _markAsRead(String notificationId) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('users').doc(_currentUserId)
+          .collection('notifications').doc(notificationId)
+          .update({'isRead': true});
+    } catch (e) {
+      debugPrint('[Notif] mark one error: $e');
+    }
+  }
+
+  // ============ ROW RENDERER ============
+  Widget _notificationRow(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final type = data['type'] ?? 'info';
+    final title = data['title'] ?? 'Notification';
+    final body = data['body'] ?? '';
+    final isRead = data['isRead'] == true;
+    final ts = data['createdAt'] as Timestamp?;
+    final extra = data['data'] as Map<String, dynamic>?;
+
+    final visual = _visualFor(type);
+
+    return Material(
+      color: isRead ? Colors.white : Colors.blue[50],
+      child: InkWell(
+        onTap: () async {
+          if (!isRead) await _markAsRead(doc.id);
+          _handleTap(type, extra);
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Icon badge
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(
+                  color: visual.color.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(visual.icon,
+                  color: visual.color, size: 20),
+              ),
+              const SizedBox(width: 12),
+
+              // Content
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: isRead
+                                  ? FontWeight.w500
+                                  : FontWeight.bold,
+                              color: isRead
+                                  ? Colors.black87 : Colors.black,
+                            ),
+                          ),
+                        ),
+                        if (!isRead)
+                          Container(
+                            width: 8, height: 8,
+                            margin: const EdgeInsets.only(left: 6),
+                            decoration: const BoxDecoration(
+                              color: Colors.blue,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      body,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[700],
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      ts != null ? _shortTime(ts) : '',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============ TAP HANDLER ============
+  void _handleTap(String type, Map<String, dynamic>? extra) {
+    if (extra == null) return;
+
+    // Navigate based on notification type
+    final chatId = extra['chatId'] as String?;
+    final otherUserId = extra['otherUserId'] as String?;
+    final otherUsername = extra['otherUsername'] as String?;
+
+    if (chatId != null && otherUserId != null && otherUsername != null) {
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          otherUserId: otherUserId,
+          otherUsername: otherUsername,
+        ),
+      ));
+      return;
+    }
+
+    // Future: handle other types (post, partnership, etc.)
+  }
+
+  // ============ HELPERS ============
+  Widget _sectionHeader(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.blue[700],
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  String _dateGroupLabel(Timestamp ts) {
+    final d = ts.toDate();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final notifDay = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(notifDay).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    if (diff < 7) return 'This Week';
+    if (diff < 30) return 'This Month';
+    return 'Earlier';
+  }
+
+  String _shortTime(Timestamp ts) {
+    final d = ts.toDate();
+    final now = DateTime.now();
+    final diff = now.difference(d);
+
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24 && now.day == d.day) {
+      return '${diff.inHours}h ago';
+    }
+    if (now.difference(d).inDays == 1) return 'Yesterday';
+    if (now.difference(d).inDays < 7) {
+      return DateFormat('EEE HH:mm').format(d);
+    }
+    return DateFormat('MMM d').format(d);
+  }
+
+  _NotificationVisual _visualFor(String type) {
+    switch (type) {
+      case 'partnership_accepted':
+        return _NotificationVisual(
+          Icons.handshake, Colors.green);
+      case 'partnership_cancelled':
+        return _NotificationVisual(
+          Icons.cancel, Colors.red);
+      case 'partnership_expired':
+        return _NotificationVisual(
+          Icons.timer_off, Colors.orange);
+      case 'like':
+        return _NotificationVisual(
+          Icons.favorite, Colors.pink);
+      case 'comment':
+        return _NotificationVisual(
+          Icons.chat_bubble, Colors.blue);
+      case 'follow':
+        return _NotificationVisual(
+          Icons.person_add, Colors.purple);
+      case 'report_submitted':
+        return _NotificationVisual(
+          Icons.report, Colors.orange);
+      case 'report_received':
+        return _NotificationVisual(
+          Icons.warning_amber, Colors.red);
+      case 'report_proof_submitted':
+        return _NotificationVisual(
+          Icons.description, Colors.blue);
+      case 'report_accepted':
+      case 'admin_action':
+        return _NotificationVisual(
+          Icons.verified, Colors.green);
+      case 'partner_became_cheater':
+        return _NotificationVisual(
+          Icons.gpp_bad, Colors.red);
+      default:
+        return _NotificationVisual(
+          Icons.notifications, Colors.blueGrey);
+    }
+  }
+}
+
+class _NotificationVisual {
+  final IconData icon;
+  final Color color;
+  const _NotificationVisual(this.icon, this.color);
+}
+
+
 // ===== FILE: lib\screens\profile_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'splash_screen.dart';
 import 'settings_screen.dart';
+import 'admin_panel_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -2581,6 +4667,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       () => _showComingSoon(context)),
                     _menuTile(Icons.description_outlined, 'My Contract',
                       () => _showComingSoon(context)),
+                    // Admin-only: Admin Panel
+                    if (uid != null)
+                      StreamBuilder<DocumentSnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('admins').doc(uid).snapshots(),
+                        builder: (context, adminSnap) {
+                          if (!adminSnap.hasData ||
+                              !adminSnap.data!.exists) {
+                            return const SizedBox.shrink();
+                          }
+                          return _menuTile(
+                            Icons.admin_panel_settings,
+                            'Admin Panel',
+                            () => Navigator.push(context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const AdminPanelScreen())),
+                            color: Colors.deepPurple,
+                          );
+                        },
+                      ),
                     _menuTile(Icons.settings_outlined, 'Settings',
                       () => Navigator.push(context,
                         MaterialPageRoute(
@@ -2637,6 +4744,270 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _showComingSoon(BuildContext context) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Coming in future screens!')));
+  }
+}
+
+
+
+// ===== FILE: lib\screens\report_sheet.dart =====
+import 'package:flutter/material.dart';
+import '../services/report_service.dart';
+
+class ReportSheet extends StatefulWidget {
+  final String reportedUserId;
+  final String reportedUsername;
+
+  const ReportSheet({
+    super.key,
+    required this.reportedUserId,
+    required this.reportedUsername,
+  });
+
+  @override
+  State<ReportSheet> createState() => _ReportSheetState();
+}
+
+class _ReportSheetState extends State<ReportSheet> {
+  final _reasonController = TextEditingController();
+  final _proofController = TextEditingController();
+  bool _submitting = false;
+  String? _error;
+
+  Future<void> _submit() async {
+    final reason = _reasonController.text.trim();
+    final proof = _proofController.text.trim();
+
+    if (reason.length < 10) {
+      setState(() => _error =
+        'Reason must be at least 10 characters');
+      return;
+    }
+    if (proof.length < 10) {
+      setState(() => _error =
+        'Proof must be at least 10 characters');
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+
+    try {
+      await ReportService.submitReport(
+        reportedId: widget.reportedUserId,
+        reportedUsername: widget.reportedUsername,
+        reason: reason,
+        reporterProof: proof,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Report submitted. They have 80 hours to respond.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      setState(() => _error =
+        '$e'.replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    _proofController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Container(
+      padding: EdgeInsets.only(
+        left: 20, right: 20, top: 16, bottom: bottom + 20),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Handle
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            Row(
+              children: const [
+                Icon(Icons.report, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('Report User',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange,
+                  )),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You are reporting @${widget.reportedUsername}.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[700],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Reason
+            const Text('Reason for reporting *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              )),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _reasonController,
+              maxLength: 300,
+              maxLines: 3,
+              minLines: 2,
+              decoration: InputDecoration(
+                hintText:
+                    'Explain what happened. Be specific — '
+                    'e.g. "We partnered for gym but they never '
+                    'showed up."',
+                counterText: '',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Reporter proof
+            const Text('Your proof *',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              )),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _proofController,
+              maxLength: 500,
+              maxLines: 4,
+              minLines: 3,
+              decoration: InputDecoration(
+                hintText:
+                    'Describe your evidence. Include chat excerpts, '
+                    'dates, or any facts. This protects you from '
+                    'false-reporting accusations.',
+                counterText: '',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Warning box
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange[200]!),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline,
+                    color: Colors.orange, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The reported user will have 80 hours to submit '
+                      'their own proof. Both sides will be reviewed '
+                      'before any action is taken.',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            if (_error != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: Text(_error!,
+                  style: const TextStyle(
+                    color: Colors.red, fontSize: 12)),
+              ),
+
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _submitting ? null : _submit,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange[700],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: _submitting
+                      ? const SizedBox(
+                          height: 20, width: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                      : const Text('Submit Report',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -2799,8 +5170,8 @@ class _SearchScreenState extends State<SearchScreen>
   }
 
   // ============ POSTS ============
-  // Strategy: Fetch posts by keyword only (no ordering), then
-  // apply filter + sort in Dart. This avoids composite indexes entirely.
+  // Strategy: Fetch posts by keyword + sort in Dart.
+  // "Most Viewed" and "Most Liked" fetch a large batch then sort client-side.
   Future<void> _searchPosts(bool reset) async {
     final q = _query.trim().toLowerCase();
 
@@ -2812,9 +5183,9 @@ class _SearchScreenState extends State<SearchScreen>
           .collection('posts')
           .where('contentLower', isGreaterThanOrEqualTo: q)
           .where('contentLower', isLessThan: '$q\uf8ff')
-          .limit(100); // fetch bigger batch so sort has data
+          .limit(100);
     } else {
-      // No keyword → fetch recent posts by default (single orderBy)
+      // No keyword → fetch recent posts by default
       query = FirebaseFirestore.instance
           .collection('posts')
           .orderBy('createdAt', descending: true)
@@ -2822,7 +5193,6 @@ class _SearchScreenState extends State<SearchScreen>
     }
 
     final snap = await query.get();
-
     var posts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
 
     // Apply filter in Dart
@@ -2864,7 +5234,6 @@ class _SearchScreenState extends State<SearchScreen>
         break;
     }
 
-    // Pagination: slice results based on what's already loaded
     final existingIds = _postResults.map((p) => p.id).toSet();
     final fresh = posts.where((p) => !existingIds.contains(p.id)).toList();
     final slice = fresh.take(pageSize).toList();
@@ -2876,7 +5245,7 @@ class _SearchScreenState extends State<SearchScreen>
         _postResults.addAll(slice);
       }
       _hasMore = fresh.length > pageSize;
-      _lastDoc = null; // no cursor-based pagination here
+      _lastDoc = null;
     });
   }
 
@@ -3090,6 +5459,8 @@ class _SearchScreenState extends State<SearchScreen>
         ],
       ),
       title: Text(username,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: const TextStyle(
           fontWeight: FontWeight.bold, fontSize: 15)),
       subtitle: Column(
@@ -3119,8 +5490,8 @@ class _SearchScreenState extends State<SearchScreen>
             otherUsername: username,
           )),
         ),
-        icon: const Icon(Icons.chat_bubble_outline, size: 16),
-        label: const Text('Chat', style: TextStyle(fontSize: 12)),
+        icon: const Icon(Icons.chat_bubble_outline, size: 14),
+        label: const Text('Chat', style: TextStyle(fontSize: 11)),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.blue[600],
           foregroundColor: Colors.white,
@@ -3176,6 +5547,8 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 }
+
+
 
 
 // ===== FILE: lib\screens\settings_screen.dart =====
@@ -3980,11 +6353,319 @@ class PartnershipService {
 }
 
 
+
+// ===== FILE: lib\services\report_service.dart =====
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
+class ReportService {
+  static final _db = FirebaseFirestore.instance;
+
+  /// User 1 submits a report against User 2.
+  /// Both reason and proof are required — this prevents revenge reporting.
+  static Future<String> submitReport({
+    required String reportedId,
+    required String reportedUsername,
+    required String reason,
+    required String reporterProof,
+  }) async {
+    final me = FirebaseAuth.instance.currentUser!;
+    if (me.uid == reportedId) {
+      throw Exception('You cannot report yourself');
+    }
+
+    // ---- CHECK: Must have at least 1 partnership with the reported user ----
+    final p1 = await _db.collection('partnerships')
+        .where('userA', isEqualTo: me.uid)
+        .where('userB', isEqualTo: reportedId)
+        .limit(1)
+        .get();
+    final p2 = await _db.collection('partnerships')
+        .where('userA', isEqualTo: reportedId)
+        .where('userB', isEqualTo: me.uid)
+        .limit(1)
+        .get();
+
+    if (p1.docs.isEmpty && p2.docs.isEmpty) {
+      throw Exception(
+        'You can only report users you have partnered with before');
+    }
+
+    // Check if User 2 already has an active report against them
+    final existing = await _db.collection('reports')
+        .where('reportedId', isEqualTo: reportedId)
+        .where('status', whereIn: [
+          'pending_proof',
+          'under_review',
+          'expired_proof',
+          'cheater',
+        ])
+        .limit(1)
+        .get();
+
+    if (existing.docs.isNotEmpty) {
+      throw Exception('This user already has an active report');
+    }
+
+    // Get my username
+    final meDoc = await _db.collection('users').doc(me.uid).get();
+    final myUsername = meDoc.data()?['username'] ?? 'Unknown';
+
+    final now = DateTime.now();
+    final proofDeadline = now.add(const Duration(hours: 80));
+
+    final ref = await _db.collection('reports').add({
+      'reporterId': me.uid,
+      'reporterUsername': myUsername,
+      'reportedId': reportedId,
+      'reportedUsername': reportedUsername,
+      'reason': reason,
+      'reporterProof': reporterProof,
+      'reportedProof': '',
+      'status': 'pending_proof',
+      'createdAt': FieldValue.serverTimestamp(),
+      'proofDeadline': Timestamp.fromDate(proofDeadline),
+      'cheaterAt': null,
+      'deleteAt': null,
+      'deletedAt': null,
+    });
+
+    // Notify reporter
+    await _db.collection('users').doc(me.uid)
+        .collection('notifications').add({
+      'type': 'report_submitted',
+      'title': 'Report submitted',
+      'body':
+          'Your report against $reportedUsername has been submitted. '
+          'You will be notified of the outcome.',
+      'data': {'reportId': ref.id},
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    // Notify reported user
+    await _db.collection('users').doc(reportedId)
+        .collection('notifications').add({
+      'type': 'report_received',
+      'title': '⚠️ You have been reported',
+      'body':
+          'You have 80 hours to submit proof of your innocence. '
+          'Otherwise your account will be flagged.',
+      'data': {'reportId': ref.id},
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    debugPrint('[Report] submitted ${ref.id}');
+    return ref.id;
+  }
+
+  /// User 2 submits their proof (counter-evidence).
+  static Future<void> submitProof({
+    required String reportId,
+    required String proof,
+  }) async {
+    final me = FirebaseAuth.instance.currentUser!;
+    if (proof.trim().length < 10) {
+      throw Exception('Proof must be at least 10 characters');
+    }
+
+    final ref = _db.collection('reports').doc(reportId);
+    final snap = await ref.get();
+    if (!snap.exists) throw Exception('Report not found');
+    final data = snap.data()!;
+    if (data['reportedId'] != me.uid) {
+      throw Exception('You are not the reported user');
+    }
+    if (data['status'] != 'pending_proof') {
+      throw Exception('This report is no longer accepting proof');
+    }
+
+    await ref.update({
+      'reportedProof': proof,
+      'status': 'under_review',
+      'proofSubmittedAt': FieldValue.serverTimestamp(),
+    });
+
+    // Notify reporter
+    await _db.collection('users').doc(data['reporterId'])
+        .collection('notifications').add({
+      'type': 'report_proof_submitted',
+      'title': 'Report update',
+      'body':
+          '${data['reportedUsername']} has submitted a response to your report. '
+          'An admin will review both sides.',
+      'data': {'reportId': reportId},
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    debugPrint('[Report] proof submitted for $reportId');
+  }
+
+  /// Called by admin OR by a scheduled job when 80 hours elapse without proof.
+  /// Marks user as cheater + notifies their past partners.
+  static Future<void> markAsCheater(String reportId) async {
+    final ref = _db.collection('reports').doc(reportId);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    final data = snap.data()!;
+    if (data['status'] != 'pending_proof') return;
+
+    final reportedId = data['reportedId'] as String;
+    final reportedUsername = data['reportedUsername'] as String;
+
+    final now = DateTime.now();
+    final deleteAt = now.add(const Duration(hours: 36));
+
+    // Update report
+    await ref.update({
+      'status': 'cheater',
+      'cheaterAt': FieldValue.serverTimestamp(),
+      'deleteAt': Timestamp.fromDate(deleteAt),
+    });
+
+    // Mark user as cheater
+    try {
+      await _db.collection('users').doc(reportedId).update({
+        'isBanned': true,
+        'isCheater': true,
+      });
+    } catch (e) {
+      debugPrint('[Report] user update error: $e');
+    }
+
+    // Notify past partners (users who have at least 1 partnership with the cheater)
+    try {
+      final partnerships = await _db.collection('partnerships')
+          .where('userA', whereIn: [reportedId])
+          .get();
+      final partnerships2 = await _db.collection('partnerships')
+          .where('userB', whereIn: [reportedId])
+          .get();
+
+      final partnerIds = <String>{};
+      for (final p in partnerships.docs) {
+        partnerIds.add(p.data()['userB']);
+      }
+      for (final p in partnerships2.docs) {
+        partnerIds.add(p.data()['userA']);
+      }
+      partnerIds.remove(reportedId);
+
+      for (final partnerId in partnerIds) {
+        await _db.collection('users').doc(partnerId)
+            .collection('notifications').add({
+          'type': 'partner_became_cheater',
+          'title': '⚠️ A past partner was flagged',
+          'body':
+              '$reportedUsername has been added to the Cheater Board. '
+              'If you had a partnership with them, review your agreements.',
+          'data': {'cheaterId': reportedId},
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+      debugPrint('[Report] notified ${partnerIds.length} partners');
+    } catch (e) {
+      debugPrint('[Report] partner notify error: $e');
+    }
+
+    // Notify reporter
+    try {
+      await _db.collection('users').doc(data['reporterId'])
+          .collection('notifications').add({
+        'type': 'report_accepted',
+        'title': 'Report outcome',
+        'body':
+            '$reportedUsername failed to submit proof. They have been '
+            'added to the Cheater Board.',
+        'data': {'reportId': reportId},
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
+
+    debugPrint('[Report] marked as cheater: $reportId');
+  }
+
+  /// Called when 36 hours have passed since cheaterAt.
+  /// Deletes the user's account.
+  static Future<void> deleteCheaterAccount(String reportId) async {
+    final ref = _db.collection('reports').doc(reportId);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    final data = snap.data()!;
+    if (data['status'] != 'cheater') return;
+    if (data['deletedAt'] != null) return; // already deleted
+
+    final reportedId = data['reportedId'] as String;
+
+    // Mark report as deleted
+    await ref.update({
+      'status': 'deleted',
+      'deletedAt': FieldValue.serverTimestamp(),
+    });
+
+    // Delete the user document
+    try {
+      await _db.collection('users').doc(reportedId).delete();
+      debugPrint('[Report] deleted user $reportedId');
+    } catch (e) {
+      debugPrint('[Report] delete error: $e');
+    }
+  }
+
+  /// Checks all pending reports and processes any that have passed deadlines.
+  /// Call this on app startup or from a scheduled Cloud Function.
+  static Future<void> processDeadlines() async {
+    final now = DateTime.now();
+
+    // 1. Expire proof deadlines
+    try {
+      final pending = await _db.collection('reports')
+          .where('status', isEqualTo: 'pending_proof')
+          .get();
+
+      for (final doc in pending.docs) {
+        final data = doc.data();
+        final deadline = (data['proofDeadline'] as Timestamp?)?.toDate();
+        if (deadline != null && now.isAfter(deadline)) {
+          await markAsCheater(doc.id);
+        }
+      }
+    } catch (e) {
+      debugPrint('[Report] deadline process error: $e');
+    }
+
+    // 2. Delete cheaters past 36h window
+    try {
+      final cheaters = await _db.collection('reports')
+          .where('status', isEqualTo: 'cheater')
+          .get();
+
+      for (final doc in cheaters.docs) {
+        final data = doc.data();
+        final deleteAt = (data['deleteAt'] as Timestamp?)?.toDate();
+        if (deleteAt != null && now.isAfter(deleteAt)) {
+          await deleteCheaterAccount(doc.id);
+        }
+      }
+    } catch (e) {
+      debugPrint('[Report] cheater delete error: $e');
+    }
+  }
+}
+
+
+
 // ===== FILE: lib\widgets\partnership_listener.dart =====
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../screens/splash_screen.dart';
 import 'partnership_popup.dart';
 
 class PartnershipListener extends StatefulWidget {
@@ -4006,13 +6687,68 @@ class _PartnershipListenerState extends State<PartnershipListener> {
   List<QueryDocumentSnapshot> _docsA = [];
   List<QueryDocumentSnapshot> _docsB = [];
 
+  StreamSubscription<DocumentSnapshot>? _userDocSub;
+
   @override
   void initState() {
     super.initState();
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       _uid = user?.uid;
       _restart();
+      _watchUserDoc(user?.uid);
     });
+  }
+
+  /// Watch the current user's doc. If it disappears (account deleted),
+  /// or isBanned is true → force logout.
+  void _watchUserDoc(String? uid) {
+    _userDocSub?.cancel();
+    _userDocSub = null;
+    if (uid == null) return;
+
+    _userDocSub = FirebaseFirestore.instance
+        .collection('users').doc(uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+
+      // Doc missing → account was deleted
+      if (!snap.exists) {
+        debugPrint('[AuthGuard] user doc missing → logout');
+        _forceLogout('Your account has been deleted.');
+        return;
+      }
+
+      // Check banned flag
+      final data = snap.data() as Map<String, dynamic>?;
+      if (data?['isBanned'] == true) {
+        debugPrint('[AuthGuard] user banned → logout');
+        _forceLogout('Your account has been banned.');
+      }
+    }, onError: (e) {
+      debugPrint('[AuthGuard] userDoc error: $e');
+    });
+  }
+
+  Future<void> _forceLogout(String message) async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const SplashScreen()),
+      (route) => false,
+    );
   }
 
   void _restart() {
@@ -4087,6 +6823,7 @@ class _PartnershipListenerState extends State<PartnershipListener> {
     _subB?.cancel();
     _authSub?.cancel();
     _nullDebounce?.cancel();
+    _userDocSub?.cancel();
     super.dispose();
   }
 
@@ -4107,6 +6844,7 @@ class _PartnershipListenerState extends State<PartnershipListener> {
     );
   }
 }
+
 
 
 // ===== FILE: lib\widgets\partnership_popup.dart =====
@@ -4311,6 +7049,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
             ),
+            child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -4363,6 +7102,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
                 ),
               ],
             ),
+            ),
           ),
         ),
       ),
@@ -4393,7 +7133,8 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
 
   Widget _waitingForReceiverView(
       String otherUsername, PartnershipRequestModel req) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.hourglass_top, size: 60, color: Colors.orange),
@@ -4440,12 +7181,14 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ),
         ),
       ],
+      ),
     );
   }
 
   Widget _receiverDecisionView(
       String otherUsername, PartnershipRequestModel req) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.handshake, size: 60, color: Colors.blue),
@@ -4522,11 +7265,13 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ],
         ),
       ],
+      ),
     );
   }
 
   Widget _waitingForSenderView(String otherUsername) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.check_circle, size: 60, color: Colors.green),
@@ -4562,11 +7307,13 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ),
         ),
       ],
+      ),
     );
   }
 
   Widget _senderDecisionView(String otherUsername) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.check_circle, size: 60, color: Colors.green),
@@ -4633,6 +7380,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ],
         ),
       ],
+      ),
     );
   }
 
@@ -4670,6 +7418,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
 }
 
 
+
 // ===== FILE: lib\widgets\post_card.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -4693,11 +7442,51 @@ class _PostCardState extends State<PostCard> {
   final currentUserId = FirebaseAuth.instance.currentUser?.uid;
   bool _isLiked = false;
   bool _likeLoading = false;
+  bool _viewRecorded = false;
 
   @override
   void initState() {
     super.initState();
     _listenLikeStatus();
+    _recordView();
+  }
+
+  /// Records a unique view — only counts once per user per post.
+  Future<void> _recordView() async {
+    if (currentUserId == null || _viewRecorded) return;
+
+    // Don't count the author viewing their own post
+    if (widget.post.userId == currentUserId) {
+      _viewRecorded = true;
+      return;
+    }
+
+    _viewRecorded = true;
+
+    try {
+      final postRef = FirebaseFirestore.instance
+          .collection('posts').doc(widget.post.id);
+      final viewRef = postRef.collection('views').doc(currentUserId);
+
+      // Check if already viewed
+      final existing = await viewRef.get();
+      if (existing.exists) {
+        debugPrint('[Views] already counted for ${widget.post.id}');
+        return;
+      }
+
+      // Add view record + increment counter atomically
+      await viewRef.set({
+        'userId': currentUserId,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      await postRef.update({
+        'viewsCount': FieldValue.increment(1),
+      });
+      debugPrint('[Views] recorded for ${widget.post.id}');
+    } catch (e) {
+      debugPrint('[Views] error: $e');
+    }
   }
 
   void _listenLikeStatus() {
@@ -4726,6 +7515,28 @@ class _PostCardState extends State<PostCard> {
           'timestamp': FieldValue.serverTimestamp(),
         });
         await postRef.update({'likesCount': FieldValue.increment(1)});
+
+        if (widget.post.userId != currentUserId) {
+          try {
+            final meDoc = await FirebaseFirestore.instance
+                .collection('users').doc(currentUserId).get();
+            final myUsername = meDoc.data()?['username'] ?? 'Someone';
+            await FirebaseFirestore.instance
+                .collection('users').doc(widget.post.userId)
+                .collection('notifications').add({
+              'type': 'like',
+              'title': '$myUsername liked your post',
+              'body': widget.post.content.length > 60
+                  ? '${widget.post.content.substring(0, 60)}...'
+                  : widget.post.content,
+              'data': {'postId': widget.post.id},
+              'isRead': false,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+          } catch (e) {
+            debugPrint('[Notif] like error: $e');
+          }
+        }
       }
     } catch (_) {}
     if (mounted) setState(() => _likeLoading = false);
@@ -4800,6 +7611,7 @@ class _PostCardState extends State<PostCard> {
                   }
                 },
               ),
+
             ListTile(
               leading: const Icon(Icons.share),
               title: const Text('Share'),
@@ -4867,6 +7679,8 @@ class _PostCardState extends State<PostCard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(post.username,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 15)),
                           Text(_timeAgo(post.createdAt),
@@ -4883,6 +7697,8 @@ class _PostCardState extends State<PostCard> {
                 ),
                 const SizedBox(height: 10),
                 Text(post.content,
+                  maxLines: 10,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 15, height: 1.4)),
                 const SizedBox(height: 12),
                 const Divider(height: 1),
@@ -4890,31 +7706,37 @@ class _PostCardState extends State<PostCard> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _actionBtn(
+                    Expanded(child: _actionBtn(
                       icon: _isLiked
                           ? Icons.favorite : Icons.favorite_border,
                       color: _isLiked ? Colors.red : Colors.grey[700]!,
                       label: '${post.likesCount}',
                       onTap: _toggleLike,
-                    ),
-                    _actionBtn(
+                    )),
+                    Expanded(child: _actionBtn(
                       icon: Icons.chat_bubble_outline,
                       color: Colors.grey[700]!,
                       label: '${post.commentsCount}',
                       onTap: _openComments,
-                    ),
-                    _actionBtn(
+                    )),
+                    Expanded(child: _actionBtn(
+                      icon: Icons.visibility_outlined,
+                      color: Colors.grey[700]!,
+                      label: '${post.viewsCount}',
+                      onTap: () {},
+                    )),
+                    Expanded(child: _actionBtn(
                       icon: Icons.share_outlined,
                       color: Colors.grey[700]!,
                       label: 'Share',
                       onTap: _share,
-                    ),
-                    _actionBtn(
+                    )),
+                    Expanded(child: _actionBtn(
                       icon: Icons.handshake_outlined,
                       color: Colors.blue[700]!,
                       label: 'Chat',
                       onTap: _openChat,
-                    ),
+                    )),
                   ],
                 ),
               ],
@@ -4935,18 +7757,32 @@ class _PostCardState extends State<PostCard> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(width: 5),
-            Text(label, style: TextStyle(color: color, fontSize: 13)),
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color, fontSize: 12),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 }
+
+
+
+
+
+
 
 
 // ===== FILE: lib\firebase_options.dart =====

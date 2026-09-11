@@ -6,6 +6,8 @@ import 'dart:math';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
 import 'chat_list_screen.dart';
+import 'notifications_screen.dart';
+import '../services/report_service.dart';
 
 enum FeedFilter { newest, mostInteracted, random }
 
@@ -35,6 +37,19 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     _loadFeed(reset: true);
     _listenNotifications();
     _scrollController.addListener(_onScroll);
+
+    // ---- Only ADMINs process deadlines (prevents any user from banning others) ----
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      try {
+        final adminDoc = await FirebaseFirestore.instance
+            .collection('admins').doc(uid).get();
+        if (adminDoc.exists) {
+          ReportService.processDeadlines();
+        }
+      } catch (_) {}
+    });
   }
 
   void _onScroll() {
@@ -288,10 +303,9 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Notifications coming soon')));
-                },
+                onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationsScreen())),
               ),
               if (_unreadNotifications > 0)
                 Positioned(
@@ -312,6 +326,8 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
       ),
       body: Column(
         children: [
+          // Report banner (if user has an active report against them)
+          _ReportBanner(currentUserId: FirebaseAuth.instance.currentUser?.uid),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -563,4 +579,210 @@ class ChatIconWithBadge extends StatelessWidget {
     );
   }
 }
+
+
+
+/// Shows a banner if the current user has an active report against them.
+class _ReportBanner extends StatelessWidget {
+  final String? currentUserId;
+  const _ReportBanner({required this.currentUserId});
+
+  @override
+  Widget build(BuildContext context) {
+    if (currentUserId == null) return const SizedBox.shrink();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('reports')
+          .where('reportedId', isEqualTo: currentUserId)
+          .limit(10)
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData || snap.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        // Filter for pending_proof in Dart
+        final pendingDocs = snap.data!.docs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          return data['status'] == 'pending_proof';
+        }).toList();
+        if (pendingDocs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final doc = pendingDocs.first;
+        final data = doc.data() as Map<String, dynamic>;
+        final deadline = (data['proofDeadline'] as Timestamp?)?.toDate();
+        final reporter = data['reporterUsername'] ?? 'a user';
+
+        String timeLeft = '';
+        if (deadline != null) {
+          final diff = deadline.difference(DateTime.now());
+          if (diff.isNegative) {
+            timeLeft = 'expired';
+          } else if (diff.inHours > 0) {
+            timeLeft = '${diff.inHours}h left';
+          } else {
+            timeLeft = '${diff.inMinutes}m left';
+          }
+        }
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.orange[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.orange[300]!, width: 2),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.warning_amber,
+                    color: Colors.orange, size: 24),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'You have been reported by @$reporter',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Submit proof of your innocence. '
+                'Time remaining: $timeLeft',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.orange[900],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showProofDialog(context, doc.id),
+                      icon: const Icon(Icons.upload, size: 16),
+                      label: const Text('Submit Proof',
+                        style: TextStyle(fontSize: 12)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange[700],
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showProofDialog(BuildContext context, String reportId) {
+    final controller = TextEditingController();
+    bool submitting = false;
+    String? error;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+          title: const Text('Submit Your Proof'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Explain your side of the story. Include any chat '
+                'excerpts, dates, or facts that prove your innocence.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLength: 500,
+                maxLines: 5,
+                minLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Your proof...',
+                  errorText: error,
+                  counterText: '',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: submitting
+                  ? null
+                  : () async {
+                      final proof = controller.text.trim();
+                      if (proof.length < 10) {
+                        setDialogState(() =>
+                          error = 'Proof must be at least 10 characters');
+                        return;
+                      }
+                      setDialogState(() => submitting = true);
+                      try {
+                        await ReportService.submitProof(
+                          reportId: reportId,
+                          proof: proof,
+                        );
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(
+                            content: Text('Proof submitted'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } catch (e) {
+                        setDialogState(() {
+                          error = '$e'.replaceFirst('Exception: ', '');
+                          submitting = false;
+                        });
+                      }
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange[700],
+                foregroundColor: Colors.white,
+              ),
+              child: submitting
+                ? const SizedBox(
+                    height: 18, width: 18,
+                    child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2))
+                : const Text('Submit'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
 
