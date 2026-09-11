@@ -6,6 +6,9 @@ import 'activity_screen.dart';
 import 'change_screens.dart';
 import 'blocked_users_screen.dart';
 import 'delete_account_screen.dart';
+import 'about_screen.dart';
+import 'contact_screen.dart';
+import 'privacy_policy_screen.dart';
 import '../services/theme_controller.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -297,16 +300,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               builder: (_) => const DeleteAccountScreen())),
           ),
 
+          _sectionHeader('About & Legal'),
+          _menuTile(Icons.info_outline, 'About PartnerUp',
+            () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const AboutScreen()))),
+          _menuTile(Icons.privacy_tip_outlined, 'Privacy Policy',
+            () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const PrivacyPolicyScreen()))),
+          _menuTile(Icons.description_outlined, 'Terms of Service',
+            () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const ViewContractScreen())),
+            subtitle: 'Partnership Contract'),
+
           _sectionHeader('Support'),
           _menuTile(Icons.help_outline, 'Help Center',
-            () => _infoDialog('Help Center',
-              'For help, contact support@partnerup.com')),
+            () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const ContactScreen()))),
           _menuTile(Icons.bug_report_outlined, 'Report a Bug',
-            () => _infoDialog('Report a Bug',
-              'Send bug reports to bugs@partnerup.com')),
-          _menuTile(Icons.contact_support_outlined, 'Contact Support',
-            () => _infoDialog('Contact Support',
-              'Email: support@partnerup.com')),
+            () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const ContactScreen()))),
+          _menuTile(Icons.contact_support_outlined, 'Contact Us',
+            () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => const ContactScreen()))),
         ],
       ),
     );
@@ -360,4 +375,5 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
+
 
