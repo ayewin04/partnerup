@@ -59,6 +59,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _markAllMessagesAsRead() async {
     try {
+      final chatRef = FirebaseFirestore.instance
+          .collection('chats').doc(_chatId);
+
+      // ---- ALWAYS reset my counter, regardless of message state ----
+      final chatSnap = await chatRef.get();
+      if (chatSnap.exists) {
+        final data = chatSnap.data()!;
+        final isUserA = data['userA'] == _currentUserId;
+        final myCounterKey = isUserA ? 'unreadForUserA' : 'unreadForUserB';
+        final currentVal = (data[myCounterKey] ?? 0) as int;
+        if (currentVal != 0) {
+          await chatRef.update({myCounterKey: 0});
+          debugPrint('[Chat] reset $myCounterKey from $currentVal to 0');
+        } else {
+          debugPrint('[Chat] $myCounterKey already 0');
+        }
+      }
+
+      // ---- Mark individual messages as read (for ✓✓ receipts) ----
       final messagesRef = FirebaseFirestore.instance
           .collection('chats').doc(_chatId)
           .collection('messages');
@@ -78,19 +97,7 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
       await batch.commit();
-
-      // Reset my unread counter on the chat doc
-      final chatRef = FirebaseFirestore.instance
-          .collection('chats').doc(_chatId);
-      final chatSnap = await chatRef.get();
-      if (chatSnap.exists) {
-        final data = chatSnap.data()!;
-        final isUserA = data['userA'] == _currentUserId;
-        await chatRef.update({
-          isUserA ? 'unreadForUserA' : 'unreadForUserB': 0,
-        });
-      }
-      debugPrint('[Chat] marked ${toUpdate.length} as read + reset counter');
+      debugPrint('[Chat] marked ${toUpdate.length} messages as read');
     } catch (e) {
       debugPrint('[Chat] mark read error: $e');
     }
@@ -105,6 +112,20 @@ class _ChatScreenState extends State<ChatScreen> {
         'isRead': true,
         'readAt': FieldValue.serverTimestamp(),
       });
+      // Also reset the chat doc's counter for me so the badge clears live
+      final chatRef = FirebaseFirestore.instance
+          .collection('chats').doc(_chatId);
+      final chatSnap = await chatRef.get();
+      if (chatSnap.exists) {
+        final data = chatSnap.data()!;
+        final isUserA = data['userA'] == _currentUserId;
+        final key = isUserA ? 'unreadForUserA' : 'unreadForUserB';
+        final val = (data[key] ?? 0) as int;
+        if (val != 0) {
+          await chatRef.update({key: 0});
+          debugPrint('[Chat] live reset $key from $val to 0');
+        }
+      }
     } catch (e) {
       debugPrint('[Chat] mark single error: $e');
     }
@@ -671,3 +692,5 @@ class PartnershipCountLabel extends StatelessWidget {
     );
   }
 }
+
+

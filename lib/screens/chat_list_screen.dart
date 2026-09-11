@@ -43,6 +43,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 if (seen.add(d.id)) unique.add(d);
               }
 
+              // Sort by lastMessageTime desc
               unique.sort((a, b) {
                 final ta = (a.data() as Map<String, dynamic>)['lastMessageTime'] as Timestamp?;
                 final tb = (b.data() as Map<String, dynamic>)['lastMessageTime'] as Timestamp?;
@@ -103,6 +104,12 @@ class _ChatRow extends StatelessWidget {
     final lastTime = data['lastMessageTime'] as Timestamp?;
     final lastSenderId = data['lastMessageSenderId'] as String?;
 
+    // -------- Unread count from counter fields --------
+    final amIUserA = userA == currentUserId;
+    final int unreadCount = amIUserA
+        ? (data['unreadForUserA'] ?? 0) as int
+        : (data['unreadForUserB'] ?? 0) as int;
+
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users').doc(otherUserId).snapshots(),
@@ -111,142 +118,127 @@ class _ChatRow extends StatelessWidget {
         final username = uData?['username'] ?? 'Unknown';
         final isOnline = uData?['isOnline'] == true;
 
-        return StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('chats').doc(chatDoc.id)
-              .collection('messages')
-              .where('senderId', isNotEqualTo: currentUserId)
-              .where('isRead', isEqualTo: false)
-              .snapshots(),
-          builder: (context, unreadSnap) {
-            final unreadCount = unreadSnap.data?.docs
-                .where((d) {
-                  final m = d.data() as Map<String, dynamic>;
-                  return m['senderId'] != 'system';
-                })
-                .length ?? 0;
-
-            return ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 8),
-              leading: Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 26,
-                    backgroundColor: Colors.blue[100],
-                    child: Text(
-                      username.isNotEmpty
-                        ? username[0].toUpperCase() : '?',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue[800],
-                      ),
-                    ),
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16, vertical: 8),
+          leading: Stack(
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundColor: Colors.blue[100],
+                child: Text(
+                  username.isNotEmpty
+                    ? username[0].toUpperCase() : '?',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue[800],
                   ),
-                  if (isOnline)
-                    Positioned(
-                      right: 0, bottom: 0,
-                      child: Container(
-                        width: 14, height: 14,
-                        decoration: BoxDecoration(
-                          color: Colors.green,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.white, width: 2),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              title: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      username,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: unreadCount > 0
-                            ? FontWeight.bold
-                            : FontWeight.w500,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (lastTime != null)
-                    Text(
-                      _shortTime(lastTime),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: unreadCount > 0
-                            ? Colors.blue[700]
-                            : Colors.grey[600],
-                        fontWeight: unreadCount > 0
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                ],
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Row(
-                  children: [
-                    if (lastSenderId == currentUserId) ...[
-                      Icon(Icons.done_all,
-                        size: 14,
-                        color: Colors.blue[400]),
-                      const SizedBox(width: 4),
-                    ],
-                    Expanded(
-                      child: Text(
-                        lastMessage.isEmpty ? 'No messages yet' : lastMessage,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: unreadCount > 0
-                              ? Colors.black87
-                              : Colors.grey[600],
-                          fontWeight: unreadCount > 0
-                              ? FontWeight.w500
-                              : FontWeight.normal,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (unreadCount > 0) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                        constraints: const BoxConstraints(minWidth: 20),
-                        decoration: BoxDecoration(
-                          color: Colors.blue[600],
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          unreadCount > 99 ? '99+' : '$unreadCount',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
                 ),
               ),
-              onTap: () {
-                Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => ChatScreen(
-                    otherUserId: otherUserId,
-                    otherUsername: username,
-                  )),
-                );
-              },
+              if (isOnline)
+                Positioned(
+                  right: 0, bottom: 0,
+                  child: Container(
+                    width: 14, height: 14,
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white, width: 2),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  username,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: unreadCount > 0
+                        ? FontWeight.bold
+                        : FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (lastTime != null)
+                Text(
+                  _shortTime(lastTime),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: unreadCount > 0
+                        ? Colors.blue[700]
+                        : Colors.grey[600],
+                    fontWeight: unreadCount > 0
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                ),
+            ],
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              children: [
+                if (lastSenderId == currentUserId) ...[
+                  Icon(Icons.done_all,
+                    size: 14,
+                    color: Colors.blue[400]),
+                  const SizedBox(width: 4),
+                ],
+                Expanded(
+                  child: Text(
+                    lastMessage.isEmpty ? 'No messages yet' : lastMessage,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: unreadCount > 0
+                          ? Colors.black87
+                          : Colors.grey[600],
+                      fontWeight: unreadCount > 0
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (unreadCount > 0) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7, vertical: 3),
+                    constraints: const BoxConstraints(minWidth: 22),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[600],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      unreadCount > 99 ? '99+' : '$unreadCount',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          onTap: () async {
+            await Navigator.push(context,
+              MaterialPageRoute(builder: (_) => ChatScreen(
+                otherUserId: otherUserId,
+                otherUsername: username,
+              )),
             );
+            // When returning, force rebuild so counter reflects the reset
+            // (the listener will already update, this is just a safety)
           },
         );
       },
