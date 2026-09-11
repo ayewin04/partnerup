@@ -357,11 +357,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(widget.otherUsername,
-                    style: const TextStyle(fontSize: 16),
-                    overflow: TextOverflow.ellipsis),
-                  PartnershipCountLabel(
-                    userA: _currentUserId,
-                    userB: widget.otherUserId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 16)),
+                  Flexible(
+                    child: PartnershipCountLabel(
+                      userA: _currentUserId,
+                      userB: widget.otherUserId,
+                    ),
                   ),
                 ],
               ),
@@ -585,7 +588,8 @@ class _ChatScreenState extends State<ChatScreen> {
         margin: const EdgeInsets.symmetric(vertical: 3),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75),
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+          minWidth: 60),
         decoration: BoxDecoration(
           color: isMe ? Colors.blue[700] : Colors.grey[200],
           borderRadius: BorderRadius.only(
@@ -686,11 +690,14 @@ class PartnershipCountLabel extends StatelessWidget {
         return Text(
           count == 1 ? '🤝 1 partnership'
               : '🤝 $count partnerships',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 11, color: Colors.white70),
         );
       },
     );
   }
 }
+
 
 

@@ -156,13 +156,14 @@ class _ChatRow extends StatelessWidget {
               Expanded(
                 child: Text(
                   username,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: unreadCount > 0
                         ? FontWeight.bold
                         : FontWeight.w500,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               if (lastTime != null)
@@ -260,3 +261,4 @@ class _ChatRow extends StatelessWidget {
     return DateFormat('MMM d').format(d);
   }
 }
+

@@ -199,6 +199,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
             ),
+            child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -251,6 +252,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
                 ),
               ],
             ),
+            ),
           ),
         ),
       ),
@@ -281,7 +283,8 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
 
   Widget _waitingForReceiverView(
       String otherUsername, PartnershipRequestModel req) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.hourglass_top, size: 60, color: Colors.orange),
@@ -328,12 +331,14 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ),
         ),
       ],
+      ),
     );
   }
 
   Widget _receiverDecisionView(
       String otherUsername, PartnershipRequestModel req) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.handshake, size: 60, color: Colors.blue),
@@ -410,11 +415,13 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ],
         ),
       ],
+      ),
     );
   }
 
   Widget _waitingForSenderView(String otherUsername) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.check_circle, size: 60, color: Colors.green),
@@ -450,11 +457,13 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ),
         ),
       ],
+      ),
     );
   }
 
   Widget _senderDecisionView(String otherUsername) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.check_circle, size: 60, color: Colors.green),
@@ -521,6 +530,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
           ],
         ),
       ],
+      ),
     );
   }
 
@@ -556,3 +566,4 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
     );
   }
 }
+

@@ -137,10 +137,14 @@ class _CommentSheetState extends State<CommentSheet> {
                               children: [
                                 Row(
                                   children: [
-                                    Text(c.username,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13)),
+                                    Flexible(
+                                      child: Text(c.username,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13)),
+                                    ),
                                     const SizedBox(width: 8),
                                     Text(_timeAgo(c.createdAt),
                                       style: const TextStyle(
@@ -203,3 +207,4 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+

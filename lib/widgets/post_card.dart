@@ -20,11 +20,51 @@ class _PostCardState extends State<PostCard> {
   final currentUserId = FirebaseAuth.instance.currentUser?.uid;
   bool _isLiked = false;
   bool _likeLoading = false;
+  bool _viewRecorded = false;
 
   @override
   void initState() {
     super.initState();
     _listenLikeStatus();
+    _recordView();
+  }
+
+  /// Records a unique view — only counts once per user per post.
+  Future<void> _recordView() async {
+    if (currentUserId == null || _viewRecorded) return;
+
+    // Don't count the author viewing their own post
+    if (widget.post.userId == currentUserId) {
+      _viewRecorded = true;
+      return;
+    }
+
+    _viewRecorded = true;
+
+    try {
+      final postRef = FirebaseFirestore.instance
+          .collection('posts').doc(widget.post.id);
+      final viewRef = postRef.collection('views').doc(currentUserId);
+
+      // Check if already viewed
+      final existing = await viewRef.get();
+      if (existing.exists) {
+        debugPrint('[Views] already counted for ${widget.post.id}');
+        return;
+      }
+
+      // Add view record + increment counter atomically
+      await viewRef.set({
+        'userId': currentUserId,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      await postRef.update({
+        'viewsCount': FieldValue.increment(1),
+      });
+      debugPrint('[Views] recorded for ${widget.post.id}');
+    } catch (e) {
+      debugPrint('[Views] error: $e');
+    }
   }
 
   void _listenLikeStatus() {
@@ -194,6 +234,8 @@ class _PostCardState extends State<PostCard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(post.username,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 15)),
                           Text(_timeAgo(post.createdAt),
@@ -210,6 +252,8 @@ class _PostCardState extends State<PostCard> {
                 ),
                 const SizedBox(height: 10),
                 Text(post.content,
+                  maxLines: 10,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 15, height: 1.4)),
                 const SizedBox(height: 12),
                 const Divider(height: 1),
@@ -217,31 +261,37 @@ class _PostCardState extends State<PostCard> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _actionBtn(
+                    Expanded(child: _actionBtn(
                       icon: _isLiked
                           ? Icons.favorite : Icons.favorite_border,
                       color: _isLiked ? Colors.red : Colors.grey[700]!,
                       label: '${post.likesCount}',
                       onTap: _toggleLike,
-                    ),
-                    _actionBtn(
+                    )),
+                    Expanded(child: _actionBtn(
                       icon: Icons.chat_bubble_outline,
                       color: Colors.grey[700]!,
                       label: '${post.commentsCount}',
                       onTap: _openComments,
-                    ),
-                    _actionBtn(
+                    )),
+                    Expanded(child: _actionBtn(
+                      icon: Icons.visibility_outlined,
+                      color: Colors.grey[700]!,
+                      label: '${post.viewsCount}',
+                      onTap: () {},
+                    )),
+                    Expanded(child: _actionBtn(
                       icon: Icons.share_outlined,
                       color: Colors.grey[700]!,
                       label: 'Share',
                       onTap: _share,
-                    ),
-                    _actionBtn(
+                    )),
+                    Expanded(child: _actionBtn(
                       icon: Icons.handshake_outlined,
                       color: Colors.blue[700]!,
                       label: 'Chat',
                       onTap: _openChat,
-                    ),
+                    )),
                   ],
                 ),
               ],
@@ -262,15 +312,26 @@ class _PostCardState extends State<PostCard> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(width: 5),
-            Text(label, style: TextStyle(color: color, fontSize: 13)),
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color, fontSize: 12),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 }
+
+
+

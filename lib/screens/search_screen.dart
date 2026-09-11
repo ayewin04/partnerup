@@ -155,8 +155,8 @@ class _SearchScreenState extends State<SearchScreen>
   }
 
   // ============ POSTS ============
-  // Strategy: Fetch posts by keyword only (no ordering), then
-  // apply filter + sort in Dart. This avoids composite indexes entirely.
+  // Strategy: Fetch posts by keyword + sort in Dart.
+  // "Most Viewed" and "Most Liked" fetch a large batch then sort client-side.
   Future<void> _searchPosts(bool reset) async {
     final q = _query.trim().toLowerCase();
 
@@ -168,9 +168,9 @@ class _SearchScreenState extends State<SearchScreen>
           .collection('posts')
           .where('contentLower', isGreaterThanOrEqualTo: q)
           .where('contentLower', isLessThan: '$q\uf8ff')
-          .limit(100); // fetch bigger batch so sort has data
+          .limit(100);
     } else {
-      // No keyword → fetch recent posts by default (single orderBy)
+      // No keyword → fetch recent posts by default
       query = FirebaseFirestore.instance
           .collection('posts')
           .orderBy('createdAt', descending: true)
@@ -178,7 +178,6 @@ class _SearchScreenState extends State<SearchScreen>
     }
 
     final snap = await query.get();
-
     var posts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
 
     // Apply filter in Dart
@@ -220,7 +219,6 @@ class _SearchScreenState extends State<SearchScreen>
         break;
     }
 
-    // Pagination: slice results based on what's already loaded
     final existingIds = _postResults.map((p) => p.id).toSet();
     final fresh = posts.where((p) => !existingIds.contains(p.id)).toList();
     final slice = fresh.take(pageSize).toList();
@@ -232,7 +230,7 @@ class _SearchScreenState extends State<SearchScreen>
         _postResults.addAll(slice);
       }
       _hasMore = fresh.length > pageSize;
-      _lastDoc = null; // no cursor-based pagination here
+      _lastDoc = null;
     });
   }
 
@@ -446,6 +444,8 @@ class _SearchScreenState extends State<SearchScreen>
         ],
       ),
       title: Text(username,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: const TextStyle(
           fontWeight: FontWeight.bold, fontSize: 15)),
       subtitle: Column(
@@ -475,8 +475,8 @@ class _SearchScreenState extends State<SearchScreen>
             otherUsername: username,
           )),
         ),
-        icon: const Icon(Icons.chat_bubble_outline, size: 16),
-        label: const Text('Chat', style: TextStyle(fontSize: 12)),
+        icon: const Icon(Icons.chat_bubble_outline, size: 14),
+        label: const Text('Chat', style: TextStyle(fontSize: 11)),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.blue[600],
           foregroundColor: Colors.white,
@@ -532,3 +532,5 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 }
+
+
