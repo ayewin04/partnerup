@@ -236,6 +236,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
         'userId': user.uid,
         'username': username,
         'content': text,
+        'contentLower': text.toLowerCase(),
         'likesCount': 0,
         'commentsCount': 0,
         'viewsCount': 0,
@@ -562,3 +563,4 @@ class ChatIconWithBadge extends StatelessWidget {
     );
   }
 }
+

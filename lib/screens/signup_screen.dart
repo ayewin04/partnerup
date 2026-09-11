@@ -101,6 +101,7 @@ class _SignupScreenState extends State<SignupScreen> {
       debugPrint('STEP 3: Writing to Firestore...');
       await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
         'username': _usernameController.text.trim(),
+        'usernameLower': _usernameController.text.trim().toLowerCase(),
         'email': _emailController.text.trim(),
         'bio': '',
         'avatarUrl': '',
@@ -356,3 +357,4 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 }
+
