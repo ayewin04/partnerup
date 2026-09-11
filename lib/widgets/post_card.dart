@@ -3,6 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
 import '../models/post_model.dart';
 import '../screens/comment_sheet.dart';
 import '../screens/chat_screen.dart';
@@ -87,12 +89,38 @@ class _PostCardState extends State<PostCard> {
       if (_isLiked) {
         await likeRef.delete();
         await postRef.update({'likesCount': FieldValue.increment(-1)});
+
+        // Remove from activity mirror
+        try {
+          await FirebaseFirestore.instance
+              .collection('users').doc(currentUserId)
+              .collection('activityLikes').doc(widget.post.id)
+              .delete();
+        } catch (e) {
+          debugPrint('[Activity] unlike mirror error: $e');
+        }
       } else {
         await likeRef.set({
           'userId': currentUserId,
           'timestamp': FieldValue.serverTimestamp(),
         });
         await postRef.update({'likesCount': FieldValue.increment(1)});
+
+        // Mirror to activity collection (no index needed)
+        try {
+          await FirebaseFirestore.instance
+              .collection('users').doc(currentUserId)
+              .collection('activityLikes').doc(widget.post.id)
+              .set({
+            'postId': widget.post.id,
+            'postContent': widget.post.content,
+            'postUsername': widget.post.username,
+            'postUserId': widget.post.userId,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        } catch (e) {
+          debugPrint('[Activity] like mirror error: $e');
+        }
 
         if (widget.post.userId != currentUserId) {
           try {
@@ -121,8 +149,46 @@ class _PostCardState extends State<PostCard> {
   }
 
   Future<void> _share() async {
-    await Share.share(
-      '"${widget.post.content}" - ${widget.post.username} on PartnerUp');
+    final shareText = '"${widget.post.content}" '
+        '- ${widget.post.username} on PartnerUp';
+
+    try {
+      // Try native share (works on Android, iOS, macOS, Windows)
+      // On web, share_plus falls back to navigator.share if available
+      final result = await Share.share(
+        shareText,
+        subject: 'PartnerUp post by ${widget.post.username}',
+      );
+
+      if (result.status == ShareResultStatus.dismissed) {
+        debugPrint('[Share] dismissed');
+      }
+    } catch (e) {
+      debugPrint('[Share] error: $e');
+
+      // Fallback: copy to clipboard
+      try {
+        await Clipboard.setData(ClipboardData(text: shareText));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Post copied to clipboard!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e2) {
+        debugPrint('[Share] clipboard error: $e2');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not share'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   void _openComments() {
@@ -355,6 +421,8 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
+
+
 
 
 

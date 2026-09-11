@@ -47,6 +47,26 @@ class _CommentSheetState extends State<CommentSheet> {
           .collection('posts').doc(widget.postId)
           .update({'commentsCount': FieldValue.increment(1)});
 
+      // Mirror to activity collection (no index needed)
+      try {
+        final postDoc = await FirebaseFirestore.instance
+            .collection('posts').doc(widget.postId).get();
+        final postData = postDoc.data();
+        await FirebaseFirestore.instance
+            .collection('users').doc(user.uid)
+            .collection('activityComments').doc(widget.postId)
+            .set({
+          'postId': widget.postId,
+          'postContent': postData?['content'] ?? '',
+          'postUsername': postData?['username'] ?? '',
+          'postUserId': postData?['userId'] ?? '',
+          'myComment': text,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        debugPrint('[Activity] comment mirror error: $e');
+      }
+
       try {
         final postDoc = await FirebaseFirestore.instance
             .collection('posts').doc(widget.postId).get();
@@ -229,5 +249,6 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
 
 
