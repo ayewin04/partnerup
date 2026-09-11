@@ -48,6 +48,9 @@ class _ChatScreenState extends State<ChatScreen> {
         'userB': widget.otherUserId,
         'lastMessage': '',
         'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageSenderId': '',
+        'unreadForUserA': 0,
+        'unreadForUserB': 0,
         'createdAt': FieldValue.serverTimestamp(),
         'partnershipStatus': 'none',
       });
@@ -75,6 +78,19 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
       await batch.commit();
+
+      // Reset my unread counter on the chat doc
+      final chatRef = FirebaseFirestore.instance
+          .collection('chats').doc(_chatId);
+      final chatSnap = await chatRef.get();
+      if (chatSnap.exists) {
+        final data = chatSnap.data()!;
+        final isUserA = data['userA'] == _currentUserId;
+        await chatRef.update({
+          isUserA ? 'unreadForUserA' : 'unreadForUserB': 0,
+        });
+      }
+      debugPrint('[Chat] marked ${toUpdate.length} as read + reset counter');
     } catch (e) {
       debugPrint('[Chat] mark read error: $e');
     }
@@ -104,6 +120,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     setState(() => _sending = true);
     try {
+      // Add the message
       await FirebaseFirestore.instance
           .collection('chats').doc(_chatId)
           .collection('messages').add({
@@ -112,11 +129,22 @@ class _ChatScreenState extends State<ChatScreen> {
         'timestamp': FieldValue.serverTimestamp(),
         'isRead': false,
       });
-      await FirebaseFirestore.instance
-          .collection('chats').doc(_chatId).update({
+
+      // Get chat doc to know who's userA / userB
+      final chatRef = FirebaseFirestore.instance
+          .collection('chats').doc(_chatId);
+      final chatSnap = await chatRef.get();
+      final chatData = chatSnap.data() ?? {};
+      final isUserA = chatData['userA'] == _currentUserId;
+
+      // Increment the OTHER user's unread counter
+      await chatRef.update({
         'lastMessage': text,
         'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageSenderId': _currentUserId,
+        isUserA ? 'unreadForUserB' : 'unreadForUserA': FieldValue.increment(1),
       });
+
       _controller.clear();
       Future.delayed(const Duration(milliseconds: 200), () {
         if (_scrollController.hasClients) {
@@ -127,17 +155,16 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         }
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Chat] send error: $e');
+    }
     if (mounted) setState(() => _sending = false);
   }
 
-  /// ============ UPDATED: REASON INPUT ============
   Future<void> _proposePartnership() async {
     if (_requesting) return;
 
     final reasonController = TextEditingController();
-
-    // Pre-fill with post content if it exists
     if (widget.postContent != null && widget.postContent!.isNotEmpty) {
       reasonController.text = widget.postContent!;
     }
@@ -238,7 +265,7 @@ class _ChatScreenState extends State<ChatScreen> {
         otherUsername: widget.otherUsername,
         myUsername: myUsername,
         postId: postId.isNotEmpty ? postId : null,
-        postContent: reason,     // reuse postContent as "reason"
+        postContent: reason,
       );
 
       if (!mounted) return;

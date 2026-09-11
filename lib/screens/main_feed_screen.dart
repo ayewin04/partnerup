@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:math';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
+import 'chat_list_screen.dart';
 
 enum FeedFilter { newest, mostInteracted, random }
 
@@ -21,7 +22,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
   final _scrollController = ScrollController();
 
   List<PostModel> _posts = [];
-  DocumentSnapshot? _lastDoc;   // for newest/interacted pagination
+  DocumentSnapshot? _lastDoc;
   bool _loading = false;
   bool _hasMore = true;
   bool _posting = false;
@@ -57,9 +58,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     });
   }
 
-  /// Load posts according to the current filter.
-  /// - reset = true  → start fresh
-  /// - reset = false → load more (pagination)
   Future<void> _loadFeed({required bool reset}) async {
     if (reset) {
       setState(() {
@@ -93,7 +91,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     if (reset) await _saveLastSeen();
   }
 
-  // ============ NEWEST ============
   Future<void> _loadNewest(bool reset) async {
     final query = FirebaseFirestore.instance
         .collection('posts')
@@ -117,10 +114,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     });
   }
 
-  // ============ MOST INTERACTED ============
-  // Score = likes + comments + views (computed client-side after fetch)
   Future<void> _loadMostInteracted(bool reset) async {
-    // Fetch more so we can sort by interaction and still show 20
     final query = FirebaseFirestore.instance
         .collection('posts')
         .orderBy('likesCount', descending: true)
@@ -132,14 +126,12 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
 
     var newPosts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
 
-    // Sort by total interactions
     newPosts.sort((a, b) {
       final aScore = a.likesCount + a.commentsCount + a.viewsCount;
       final bScore = b.likesCount + b.commentsCount + b.viewsCount;
       return bScore.compareTo(aScore);
     });
 
-    // Take first 20
     if (newPosts.length > pageSize) {
       newPosts = newPosts.sublist(0, pageSize);
     }
@@ -155,10 +147,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     });
   }
 
-  // ============ RANDOM ============
-  // Pull a large batch and shuffle — different each refresh
   Future<void> _loadRandom(bool reset) async {
-    // Fetch a bigger pool and shuffle
     final snap = await FirebaseFirestore.instance
         .collection('posts')
         .orderBy('createdAt', descending: true)
@@ -168,10 +157,8 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     final all = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
     all.shuffle(Random());
 
-    // Avoid duplicating already-loaded posts on "load more"
     final existingIds = _posts.map((p) => p.id).toSet();
     final fresh = all.where((p) => !existingIds.contains(p.id)).toList();
-
     final slice = fresh.take(pageSize).toList();
 
     setState(() {
@@ -180,20 +167,15 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
       } else {
         _posts.addAll(slice);
       }
-      // Random doesn't really paginate normally — just keep going
       _hasMore = fresh.length > pageSize;
     });
   }
 
-  // ============ LAST SEEN ============
   Future<void> _saveLastSeen() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('lastSeen', DateTime.now().millisecondsSinceEpoch);
   }
 
-  // ============ REFRESH ============
-  /// If Newest: show only posts since last visit.
-  /// If Interacted / Random: re-run the filter fresh.
   Future<void> _refreshFeed() async {
     if (_filter == FeedFilter.newest) {
       final prefs = await SharedPreferences.getInstance();
@@ -233,7 +215,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     }
   }
 
-  // ============ CREATE POST ============
   Future<void> _createPost() async {
     final text = _postController.text.trim();
     if (text.isEmpty) return;
@@ -278,7 +259,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     if (mounted) setState(() => _posting = false);
   }
 
-  // ============ FILTER CHANGE ============
   void _onFilterChanged(FeedFilter f) {
     if (_filter == f) return;
     setState(() => _filter = f);
@@ -301,6 +281,8 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
         title: const Text('PartnerUp',
           style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          ChatIconWithBadge(
+            currentUserId: FirebaseAuth.instance.currentUser?.uid),
           Stack(
             children: [
               IconButton(
@@ -329,7 +311,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
       ),
       body: Column(
         children: [
-          // Post input
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -374,8 +355,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
               ],
             ),
           ),
-
-          // Filter tabs
           Container(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -396,8 +375,6 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
               ],
             ),
           ),
-
-          // Feed list
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refreshFeed,
@@ -478,6 +455,110 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Chat icon with total unread count across all chats.
+/// Uses per-chat unread counters stored on the chat doc to avoid collectionGroup indexes.
+class ChatIconWithBadge extends StatelessWidget {
+  final String? currentUserId;
+  const ChatIconWithBadge({super.key, required this.currentUserId});
+
+  @override
+  Widget build(BuildContext context) {
+    if (currentUserId == null) {
+      return IconButton(
+        icon: const Icon(Icons.chat_bubble_outline),
+        onPressed: () {},
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot>(
+      // All chats where I'm userA
+      stream: FirebaseFirestore.instance
+          .collection('chats')
+          .where('userA', isEqualTo: currentUserId)
+          .snapshots(),
+      builder: (context, snapA) {
+        return StreamBuilder<QuerySnapshot>(
+          // All chats where I'm userB
+          stream: FirebaseFirestore.instance
+              .collection('chats')
+              .where('userB', isEqualTo: currentUserId)
+              .snapshots(),
+          builder: (context, snapB) {
+            final chatIds = <String>{};
+            int totalUnread = 0;
+
+            // Collect all my chats + their unread counts
+            // unreadCountA / unreadCountB fields are set by the sender's write
+            if (snapA.hasData) {
+              for (final doc in snapA.data!.docs) {
+                final d = doc.data() as Map<String, dynamic>;
+                chatIds.add(doc.id);
+                if (d['lastMessageSenderId'] != currentUserId &&
+                    d['lastMessageSenderId'] != 'system' &&
+                    d['lastMessageSenderId'] != null &&
+                    d['lastMessageSenderId'] != '') {
+                  // Other side sent it — check unread for me (userA)
+                  final unread = (d['unreadForUserA'] ?? 0) as int;
+                  totalUnread += unread;
+                }
+              }
+            }
+            if (snapB.hasData) {
+              for (final doc in snapB.data!.docs) {
+                final d = doc.data() as Map<String, dynamic>;
+                chatIds.add(doc.id);
+                if (d['lastMessageSenderId'] != currentUserId &&
+                    d['lastMessageSenderId'] != 'system' &&
+                    d['lastMessageSenderId'] != null &&
+                    d['lastMessageSenderId'] != '') {
+                  final unread = (d['unreadForUserB'] ?? 0) as int;
+                  totalUnread += unread;
+                }
+              }
+            }
+
+            return Stack(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.chat_bubble_outline),
+                  tooltip: 'Chats',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ChatListScreen(),
+                    ),
+                  ),
+                ),
+                if (totalUnread > 0)
+                  Positioned(
+                    right: 8, top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      constraints: const BoxConstraints(minWidth: 18),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        totalUnread > 99 ? '99+' : '$totalUnread',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

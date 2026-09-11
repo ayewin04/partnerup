@@ -10,7 +10,7 @@ class PartnershipService {
     required String otherUsername,
     required String myUsername,
     String? postId,
-    String? postContent,   // in this flow = "reason"
+    String? postContent,
   }) async {
     final myUid = FirebaseAuth.instance.currentUser!.uid;
     final expiresAt = DateTime.now().add(const Duration(minutes: 15));
@@ -22,7 +22,7 @@ class PartnershipService {
       'usernameB': otherUsername,
       'postId': postId ?? '',
       'postContent': postContent ?? '',
-      'reason': postContent ?? '',   // explicit reason field
+      'reason': postContent ?? '',
       'status': 'pending',
       'userAAccepted': false,
       'userBAccepted': false,
@@ -64,7 +64,6 @@ class PartnershipService {
 
     if (!both) return;
 
-    // Partnership doc
     final pRef = _db.collection('partnerships').doc();
     await pRef.set({
       'userA': userA,
@@ -79,7 +78,6 @@ class PartnershipService {
       'isReported': false,
     });
 
-    // Counts
     try {
       await _db.collection('users').doc(userA).update({
         'partnershipCount': FieldValue.increment(1),
@@ -95,7 +93,6 @@ class PartnershipService {
       debugPrint('[Service] userB count error: $e');
     }
 
-    // System chat message
     final ids = [userA, userB]..sort();
     final chatId = ids.join('_');
     try {
@@ -115,6 +112,7 @@ class PartnershipService {
       await _db.collection('chats').doc(chatId).update({
         'lastMessage': '🤝 Partnership confirmed',
         'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageSenderId': 'system',
       });
     } catch (e) {
       debugPrint('[Service] system message error: $e');
