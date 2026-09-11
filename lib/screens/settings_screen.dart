@@ -1,4 +1,7 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'splash_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -8,6 +11,47 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _darkMode = false;
+
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout?'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Logout',
+              style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        await FirebaseFirestore.instance
+            .collection('users').doc(uid).update({
+          'isOnline': false,
+          'lastSeenAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (_) {}
+
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const SplashScreen()),
+      (route) => false,
+    );
+  }
   bool _showOnlineStatus = true;
   bool _allowChatFromAnyone = true;
   bool _notifyLikes = true;
@@ -124,6 +168,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
 
+          _sectionHeader('Account Actions'),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: const Text('Logout',
+              style: TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+              )),
+            onTap: _logout,
+          ),
+
           _sectionHeader('Support'),
           ListTile(
             leading: const Icon(Icons.help_outline),
@@ -167,3 +222,4 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SnackBar(content: Text('Coming soon!')));
   }
 }
+
