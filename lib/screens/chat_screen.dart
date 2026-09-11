@@ -340,26 +340,33 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leadingWidth: 40,  // tighter back button area
+        titleSpacing: 0,    // no extra gap
         title: Row(
           children: [
             CircleAvatar(
-              radius: 18,
-              backgroundColor: Colors.blue[100],
+              radius: 16,
+              backgroundColor: Colors.white24,
               child: Text(
                 widget.otherUsername.isNotEmpty
                   ? widget.otherUsername[0].toUpperCase() : '?',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(widget.otherUsername,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 16)),
+                    style: const TextStyle(fontSize: 15)),
                   Flexible(
                     child: PartnershipCountLabel(
                       userA: _currentUserId,
@@ -380,9 +387,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: CircularProgressIndicator(
                     color: Colors.white, strokeWidth: 2))
               : const Icon(Icons.handshake,
-                  color: Colors.white, size: 20),
+                  color: Colors.white, size: 18),
             label: const Text('Partnerup',
-              style: TextStyle(color: Colors.white, fontSize: 12)),
+              style: TextStyle(color: Colors.white, fontSize: 11)),
           ),
         ],
       ),
@@ -698,6 +705,7 @@ class PartnershipCountLabel extends StatelessWidget {
     );
   }
 }
+
 
 
 
