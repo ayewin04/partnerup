@@ -35,17 +35,8 @@ class PartnerUpApp extends StatelessWidget {
           theme: _lightTheme(),
           darkTheme: _darkTheme(),
           builder: (context, child) {
-            final mq = MediaQuery.of(context);
-            return MediaQuery(
-              data: mq.copyWith(
-                textScaler: mq.textScaler.clamp(
-                  minScaleFactor: 0.85,
-                  maxScaleFactor: 1.2,
-                ),
-              ),
-              child: PartnershipListener(
-                child: child ?? const SizedBox.shrink(),
-              ),
+            return PartnershipListener(
+              child: child ?? const SizedBox.shrink(),
             );
           },
           home: const SplashScreen(),
@@ -348,4 +339,3 @@ class PartnerUpApp extends StatelessWidget {
     );
   }
 }
-

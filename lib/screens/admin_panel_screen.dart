@@ -58,91 +58,190 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: _statuses.map((status) => _buildList(status)).toList(),
+        children: _statuses.map((status) => _ReportsList(
+          key: ValueKey(status ?? 'all'),
+          status: status,
+        )).toList(),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// A single paginated list for one status filter
+// ============================================================
+class _ReportsList extends StatefulWidget {
+  final String? status;
+  const _ReportsList({super.key, required this.status});
+
+  @override
+  State<_ReportsList> createState() => _ReportsListState();
+}
+
+class _ReportsListState extends State<_ReportsList> {
+  // All fetched reports for this filter (cached in memory)
+  List<DocumentSnapshot> _allDocs = [];
+  // How many to display currently
+  int _visibleCount = 20;
+
+  bool _loading = true;
+  String? _error;
+
+  static const int _fetchLimit = 100; // fetch once, paginate client-side
+  static const int _pageSize = 20;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      // NO INDEX: single-field query only
+      final snap = await FirebaseFirestore.instance
+          .collection('reports')
+          .limit(_fetchLimit)
+          .get();
+
+      var docs = snap.docs.toList();
+
+      // Filter in Dart
+      if (widget.status != null) {
+        docs = docs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          return data['status'] == widget.status;
+        }).toList();
+      }
+
+      // Sort by createdAt desc in Dart
+      docs.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      if (mounted) {
+        setState(() {
+          _allDocs = docs;
+          _visibleCount = _pageSize;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[Admin] load error: $e');
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  void _loadMore() {
+    setState(() {
+      _visibleCount = (_visibleCount + _pageSize).clamp(0, _allDocs.length);
+    });
+  }
+
+  bool get _hasMore => _visibleCount < _allDocs.length;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 50, color: Colors.red),
+              const SizedBox(height: 12),
+              Text(_error!, textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadAll,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_allDocs.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox, size: 60, color: Colors.grey),
+            SizedBox(height: 12),
+            Text('No reports in this category',
+              style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
+    final visible = _allDocs.take(_visibleCount).toList();
+    final itemCount = visible.length + (_hasMore ? 1 : 0);
+
+    return RefreshIndicator(
+      onRefresh: _loadAll,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(12),
+        itemCount: itemCount,
+        itemBuilder: (context, i) {
+          if (i == visible.length) return _buildFooter();
+          return _reportCard(visible[i]);
+        },
       ),
     );
   }
 
-  Widget _buildList(String? status) {
-    // Simple query — no filter, no orderBy → no composite index needed.
-    // We filter + sort in Dart.
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('reports')
-          .limit(500)
-          .snapshots(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text('Error: ${snap.error}',
-                style: const TextStyle(color: Colors.red)),
+  Widget _buildFooter() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: Column(
+          children: [
+            Text(
+              'Showing $_visibleCount of ${_allDocs.length}',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),
-          );
-        }
-        if (!snap.hasData || snap.data!.docs.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.inbox, size: 60, color: Colors.grey),
-                SizedBox(height: 12),
-                Text('No reports in this category',
-                  style: TextStyle(color: Colors.grey)),
-              ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _loadMore,
+              icon: const Icon(Icons.expand_more, size: 18),
+              label: const Text('Load More'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              ),
             ),
-          );
-        }
-
-        // ---- FILTER IN DART ----
-        var docs = snap.data!.docs.toList();
-        if (status != null) {
-          docs = docs.where((d) {
-            final data = d.data() as Map<String, dynamic>;
-            return data['status'] == status;
-          }).toList();
-        }
-
-        // ---- SORT IN DART (newest first) ----
-        docs.sort((a, b) {
-          final aData = a.data() as Map<String, dynamic>;
-          final bData = b.data() as Map<String, dynamic>;
-          final ta = aData['createdAt'] as Timestamp?;
-          final tb = bData['createdAt'] as Timestamp?;
-          if (ta == null && tb == null) return 0;
-          if (ta == null) return 1;
-          if (tb == null) return -1;
-          return tb.compareTo(ta);
-        });
-
-        if (docs.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.inbox, size: 60, color: Colors.grey),
-                SizedBox(height: 12),
-                Text('No reports in this category',
-                  style: TextStyle(color: Colors.grey)),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: docs.length,
-          itemBuilder: (_, i) => _reportCard(docs[i]),
-        );
-      },
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _reportCard(QueryDocumentSnapshot doc) {
+  // ============ REPORT CARD ============
+  Widget _reportCard(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final status = data['status'] ?? 'pending_proof';
     final reporterUsername = data['reporterUsername'] ?? 'Unknown';
@@ -165,24 +264,17 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row
             Row(
               children: [
                 _statusBadge(status),
                 const Spacer(),
                 if (createdAt != null)
-                  Text(
-                    _timeAgo(createdAt),
+                  Text(_timeAgo(createdAt),
                     style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey[600],
-                    ),
-                  ),
+                      fontSize: 11, color: Colors.grey[600])),
               ],
             ),
             const SizedBox(height: 10),
-
-            // Users involved
             Row(
               children: [
                 Expanded(
@@ -204,21 +296,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               ],
             ),
             const SizedBox(height: 12),
-
-            // Reason
             _section('Reason', reason),
             const SizedBox(height: 8),
-
-            // Reporter proof
             _section('Reporter Proof', reporterProof),
             const SizedBox(height: 8),
-
-            // Accused proof
             if (reportedProof.isNotEmpty)
-              _section('Accused Proof', reportedProof,
-                highlight: true),
-
-            // Deadlines
+              _section('Accused Proof', reportedProof, highlight: true),
             const SizedBox(height: 10),
             if (status == 'pending_proof' && deadline != null)
               Row(
@@ -252,8 +335,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                 ],
               ),
             const SizedBox(height: 14),
-
-            // Actions
             _actionRow(doc, status),
           ],
         ),
@@ -271,32 +352,26 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       children: [
         Text(label,
           style: TextStyle(
-            fontSize: 10,
-            color: color,
+            fontSize: 10, color: color,
             fontWeight: FontWeight.bold,
           )),
         Text('@$username',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          )),
+            fontSize: 13, fontWeight: FontWeight.bold)),
       ],
     );
   }
 
-  Widget _section(String title, String content,
-      {bool highlight = false}) {
+  Widget _section(String title, String content, {bool highlight = false}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: highlight ? Colors.green[50] : Colors.grey[100],
         borderRadius: BorderRadius.circular(8),
-        border: highlight
-            ? Border.all(color: Colors.green[200]!)
-            : null,
+        border: highlight ? Border.all(color: Colors.green[200]!) : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -305,13 +380,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.bold,
-              color: highlight
-                  ? Colors.green[800]
-                  : Colors.grey[700],
+              color: highlight ? Colors.green[800] : Colors.grey[700],
             )),
           const SizedBox(height: 4),
-          Text(content,
-            style: const TextStyle(fontSize: 13, height: 1.4)),
+          Text(content, style: const TextStyle(fontSize: 13, height: 1.4)),
         ],
       ),
     );
@@ -324,39 +396,27 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
 
     switch (status) {
       case 'pending_proof':
-        color = Colors.orange;
-        label = 'PENDING PROOF';
-        icon = Icons.hourglass_top;
-        break;
+        color = Colors.orange; label = 'PENDING PROOF';
+        icon = Icons.hourglass_top; break;
       case 'under_review':
-        color = Colors.blue;
-        label = 'UNDER REVIEW';
-        icon = Icons.search;
-        break;
+        color = Colors.blue; label = 'UNDER REVIEW';
+        icon = Icons.search; break;
       case 'cheater':
-        color = Colors.red;
-        label = 'CHEATER';
-        icon = Icons.warning_amber;
-        break;
+        color = Colors.red; label = 'CHEATER';
+        icon = Icons.warning_amber; break;
       case 'resolved':
-        color = Colors.green;
-        label = 'RESOLVED';
-        icon = Icons.check_circle;
-        break;
+        color = Colors.green; label = 'RESOLVED';
+        icon = Icons.check_circle; break;
       case 'deleted':
-        color = Colors.grey;
-        label = 'DELETED';
-        icon = Icons.delete;
-        break;
+        color = Colors.grey; label = 'DELETED';
+        icon = Icons.delete; break;
       default:
-        color = Colors.grey;
-        label = status.toUpperCase();
+        color = Colors.grey; label = status.toUpperCase();
         icon = Icons.help;
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
@@ -369,58 +429,49 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
           const SizedBox(width: 4),
           Text(label,
             style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: color,
-            )),
+              fontSize: 10, fontWeight: FontWeight.bold, color: color)),
         ],
       ),
     );
   }
 
-  Widget _actionRow(QueryDocumentSnapshot doc, String status) {
+  Widget _actionRow(DocumentSnapshot doc, String status) {
     return Wrap(
       spacing: 6,
       runSpacing: 6,
       children: [
         if (status == 'pending_proof' || status == 'under_review') ...[
           _actionBtn(
-            icon: Icons.check_circle,
-            label: 'Resolve',
+            icon: Icons.check_circle, label: 'Resolve',
             color: Colors.green,
             onTap: () => _resolve(doc),
           ),
           _actionBtn(
-            icon: Icons.warning_amber,
-            label: 'Force Cheater',
+            icon: Icons.warning_amber, label: 'Force Cheater',
             color: Colors.red,
             onTap: () => _forceCheater(doc),
           ),
           if (status == 'pending_proof')
             _actionBtn(
-              icon: Icons.timer,
-              label: 'Extend +24h',
+              icon: Icons.timer, label: 'Extend +24h',
               color: Colors.orange,
               onTap: () => _extendDeadline(doc),
             ),
         ],
         if (status == 'cheater') ...[
           _actionBtn(
-            icon: Icons.restore,
-            label: 'Restore',
+            icon: Icons.restore, label: 'Restore',
             color: Colors.green,
             onTap: () => _restoreUser(doc),
           ),
           _actionBtn(
-            icon: Icons.delete_forever,
-            label: 'Delete Now',
+            icon: Icons.delete_forever, label: 'Delete Now',
             color: Colors.red,
             onTap: () => _deleteNow(doc),
           ),
         ],
         _actionBtn(
-          icon: Icons.delete_outline,
-          label: 'Remove Report',
+          icon: Icons.delete_outline, label: 'Remove Report',
           color: Colors.grey,
           onTap: () => _deleteReport(doc),
         ),
@@ -438,8 +489,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 10, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
@@ -452,10 +502,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
             const SizedBox(width: 5),
             Text(label,
               style: TextStyle(
-                fontSize: 11,
-                color: color,
-                fontWeight: FontWeight.bold,
-              )),
+                fontSize: 11, color: color,
+                fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -464,14 +512,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
 
   // ============ ACTIONS ============
 
-  Future<void> _resolve(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Resolve Report',
-      'This will mark the report as resolved and clear any cheater status. '
-      'The reported user will not be penalized.',
-    );
+  Future<void> _resolve(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Resolve Report',
+      'Mark this report as resolved? The reported user will not be penalized.');
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
     try {
       await doc.reference.update({
@@ -479,179 +523,126 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         'resolvedAt': FieldValue.serverTimestamp(),
         'resolvedBy': FirebaseAuth.instance.currentUser?.uid,
       });
-
-      // Un-ban the reported user if they were marked
       if (data['reportedId'] != null) {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(data['reportedId'])
-            .update({
-          'isBanned': false,
-          'isCheater': false,
+        await FirebaseFirestore.instance.collection('users')
+            .doc(data['reportedId']).update({
+          'isBanned': false, 'isCheater': false,
         }).catchError((_) {});
       }
-
-      // Notify both parties
-      await _notify(
-        data['reporterId'],
-        'Report resolved',
-        'Your report against @${data['reportedUsername']} has been resolved. '
-        'The user was not penalized.',
-      );
-      await _notify(
-        data['reportedId'],
-        'Report resolved',
-        'The report against you has been resolved. No action will be taken.',
-      );
-
+      await _notify(data['reporterId'], 'Report resolved',
+        'Your report against @${data['reportedUsername']} has been resolved.');
+      await _notify(data['reportedId'], 'Report resolved',
+        'The report against you has been resolved.');
       _showSnack('Report resolved', Colors.green);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _forceCheater(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Force Cheater Status',
-      'This immediately marks the reported user as a cheater. '
-      'They will appear on the Cheater Board and their account will be '
-      'deleted in 36 hours.',
-      confirmColor: Colors.red,
-    );
+  Future<void> _forceCheater(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Force Cheater Status',
+      'Immediately mark as cheater? Account deleted in 36 hours.',
+      confirmColor: Colors.red);
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
     final reportedId = data['reportedId'] as String;
     final reportedUsername = data['reportedUsername'] as String;
-
     try {
-      final now = DateTime.now();
-      final deleteAt = now.add(const Duration(hours: 36));
-
+      final deleteAt = DateTime.now().add(const Duration(hours: 36));
       await doc.reference.update({
         'status': 'cheater',
         'cheaterAt': FieldValue.serverTimestamp(),
         'deleteAt': Timestamp.fromDate(deleteAt),
         'forcedByAdmin': true,
       });
-
-      await FirebaseFirestore.instance
-          .collection('users').doc(reportedId).update({
-        'isBanned': true,
-        'isCheater': true,
+      await FirebaseFirestore.instance.collection('users')
+          .doc(reportedId).update({
+        'isBanned': true, 'isCheater': true,
       });
-
-      // Notify all past partners
       await _notifyPartners(reportedId, reportedUsername);
-
-      // Notify reporter
-      await _notify(
-        data['reporterId'],
-        'Report accepted',
-        '@$reportedUsername has been marked as a cheater by admin.',
-      );
-
+      await _notify(data['reporterId'], 'Report accepted',
+        '@$reportedUsername has been marked as a cheater.');
       _showSnack('User marked as cheater', Colors.red);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _extendDeadline(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Extend Deadline',
-      'Add 24 more hours to the proof deadline?',
-    );
+  Future<void> _extendDeadline(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Extend Deadline',
+      'Add 24 more hours to the proof deadline?');
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
-    final currentDeadline =
-        (data['proofDeadline'] as Timestamp?)?.toDate() ?? DateTime.now();
-    final newDeadline = currentDeadline.add(const Duration(hours: 24));
-
+    final current = (data['proofDeadline'] as Timestamp?)?.toDate()
+        ?? DateTime.now();
+    final newDeadline = current.add(const Duration(hours: 24));
     try {
       await doc.reference.update({
         'proofDeadline': Timestamp.fromDate(newDeadline),
       });
       _showSnack('Deadline extended by 24h', Colors.orange);
+      if (mounted) setState(() {});
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _restoreUser(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Restore User',
-      'This will remove the cheater status and restore the user. '
-      'Use this if the report was a mistake.',
-    );
+  Future<void> _restoreUser(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Restore User',
+      'Remove cheater status and restore the user?');
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
-    final reportedId = data['reportedId'] as String;
-
     try {
       await doc.reference.update({
         'status': 'resolved',
         'restoredAt': FieldValue.serverTimestamp(),
         'restoredByAdmin': true,
       });
-
-      await FirebaseFirestore.instance
-          .collection('users').doc(reportedId).update({
-        'isBanned': false,
-        'isCheater': false,
+      await FirebaseFirestore.instance.collection('users')
+          .doc(data['reportedId']).update({
+        'isBanned': false, 'isCheater': false,
       });
-
-      await _notify(
-        reportedId,
-        'Account restored',
-        'Your cheater status has been removed. You can use the app normally.',
-      );
-
+      await _notify(data['reportedId'], 'Account restored',
+        'Your cheater status has been removed.');
       _showSnack('User restored', Colors.green);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _deleteNow(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Delete Account Now',
-      'This immediately deletes the user account. This cannot be undone.',
-      confirmColor: Colors.red,
-    );
+  Future<void> _deleteNow(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Delete Account Now',
+      'This immediately deletes the user account. Cannot be undone.',
+      confirmColor: Colors.red);
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
-    final reportedId = data['reportedId'] as String;
-
     try {
       await doc.reference.update({
         'status': 'deleted',
         'deletedAt': FieldValue.serverTimestamp(),
         'deletedByAdmin': true,
       });
-      await FirebaseFirestore.instance
-          .collection('users').doc(reportedId).delete();
-
+      await FirebaseFirestore.instance.collection('users')
+          .doc(data['reportedId']).delete();
       _showSnack('Account deleted', Colors.red);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _deleteReport(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Remove Report',
+  Future<void> _deleteReport(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Remove Report',
       'This deletes the report entirely. Use only for spam or abuse.',
-      confirmColor: Colors.grey,
-    );
+      confirmColor: Colors.grey);
     if (confirmed != true) return;
-
     try {
       await doc.reference.delete();
       _showSnack('Report removed', Colors.grey);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
@@ -689,15 +680,23 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
   Future<void> _notify(String? uid, String title, String body) async {
     if (uid == null) return;
     try {
-      await FirebaseFirestore.instance
-          .collection('users').doc(uid)
-          .collection('notifications').add({
-        'type': 'admin_action',
-        'title': title,
-        'body': body,
-        'isRead': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      final batch = FirebaseFirestore.instance.batch();
+      batch.set(
+        FirebaseFirestore.instance.collection('users').doc(uid)
+            .collection('notifications').doc(),
+        {
+          'type': 'admin_action',
+          'title': title,
+          'body': body,
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+      batch.update(
+        FirebaseFirestore.instance.collection('users').doc(uid),
+        {'unreadNotificationCount': FieldValue.increment(1)},
+      );
+      await batch.commit();
     } catch (_) {}
   }
 
@@ -705,12 +704,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     try {
       final asA = await FirebaseFirestore.instance
           .collection('partnerships')
-          .where('userA', isEqualTo: cheaterId)
-          .get();
+          .where('userA', isEqualTo: cheaterId).get();
       final asB = await FirebaseFirestore.instance
           .collection('partnerships')
-          .where('userB', isEqualTo: cheaterId)
-          .get();
+          .where('userB', isEqualTo: cheaterId).get();
 
       final partnerIds = <String>{};
       for (final p in asA.docs) {
@@ -722,12 +719,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       partnerIds.remove(cheaterId);
 
       for (final pid in partnerIds) {
-        await _notify(
-          pid,
-          'A past partner was flagged',
-          '@$cheaterUsername has been marked as a cheater. '
-          'If you had a partnership with them, review your agreements.',
-        );
+        await _notify(pid, 'A past partner was flagged',
+          '@$cheaterUsername has been marked as a cheater.');
       }
     } catch (_) {}
   }
@@ -754,5 +747,3 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     return '${diff.inHours}h';
   }
 }
-
-

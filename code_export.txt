@@ -411,6 +411,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
+import '../widgets/paginated_list_view.dart';
 import 'chat_screen.dart';
 
 enum ActivityType { likes, comments, partnerships }
@@ -465,104 +466,157 @@ class _ActivityScreenState extends State<ActivityScreen> {
     }
   }
 
-  // ============ MIRRORED LIKES / COMMENTS ============
-  // Reads from users/{uid}/activityLikes or activityComments
-  // Uses single where + orderBy on same collection = no composite index needed.
+  // ============ MIRRORED LIKES / COMMENTS (paginated) ============
   Widget _mirroredList(String collection) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users').doc(uid)
-          .collection(collection)
-          .orderBy('createdAt', descending: true)
-          .limit(200)
-          .snapshots(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return _errorState('${snap.error}');
-        }
-        if (!snap.hasData || snap.data!.docs.isEmpty) {
-          return _emptyState(
-            icon: widget.type == ActivityType.likes
-                ? Icons.favorite_border
-                : Icons.chat_bubble_outline,
-            text: widget.type == ActivityType.likes
-                ? 'You haven\'t liked any posts yet'
-                : 'You haven\'t commented on any posts yet',
+    final base = FirebaseFirestore.instance
+        .collection('users').doc(uid)
+        .collection(collection)
+        .orderBy('createdAt', descending: true);
+
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => base.limit(20),
+      nextPageLoader: (lastDoc) =>
+          base.startAfterDocument(lastDoc).limit(20),
+      itemBuilder: (context, doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        final postId = data['postId'] ?? '';
+        // ← Use mirror data directly if available
+        final content = data['postContent'] as String? ?? '';
+        final username = data['postUsername'] as String? ?? '';
+        final postUserId = data['postUserId'] as String? ?? '';
+
+        // If mirror has all the data we need, don't fetch the post
+        if (content.isNotEmpty && username.isNotEmpty) {
+          return _postFromMirror(
+            postId: postId,
+            content: content,
+            username: username,
+            postUserId: postUserId,
+            myComment: data['myComment'] as String?,
           );
         }
 
-        final docs = snap.data!.docs;
-
-        return ListView.builder(
-          padding: const EdgeInsets.only(top: 6, bottom: 20),
-          itemCount: docs.length,
-          itemBuilder: (_, i) {
-            final data = docs[i].data() as Map<String, dynamic>;
-            final postId = data['postId'] ?? '';
-            return _postLoader(postId);
-          },
-        );
+        // Fallback: load the post
+        return _postLoader(postId);
       },
+      emptyBuilder: (context) => _emptyState(
+        icon: widget.type == ActivityType.likes
+            ? Icons.favorite_border
+            : Icons.chat_bubble_outline,
+        text: widget.type == ActivityType.likes
+            ? 'You haven\'t liked any posts yet'
+            : 'You haven\'t commented on any posts yet',
+      ),
     );
   }
 
-  // ============ PARTNERSHIPS ============
+  // ============ POST FROM MIRROR (no extra reads!) ============
+  Widget _postFromMirror({
+    required String postId,
+    required String content,
+    required String username,
+    required String postUserId,
+    String? myComment,
+  }) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          // Optionally navigate to post detail
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.blue[100],
+                    child: Text(
+                      username.isNotEmpty ? username[0].toUpperCase() : '?',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('@$username',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(content,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14, height: 1.4)),
+              if (myComment != null && myComment.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.chat_bubble_outline,
+                        size: 14, color: Colors.blue),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text('You commented: "$myComment"',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          )),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============ PARTNERSHIPS (paginated) ============
   Widget _partnershipsList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('partnerships')
-          .where('userA', whereIn: [uid])
-          .limit(200)
-          .snapshots(),
-      builder: (context, snapA) {
-        return StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('partnerships')
-              .where('userB', whereIn: [uid])
-              .limit(200)
-              .snapshots(),
-          builder: (context, snapB) {
-            final all = <QueryDocumentSnapshot>[];
-            if (snapA.hasData) all.addAll(snapA.data!.docs);
-            if (snapB.hasData) all.addAll(snapB.data!.docs);
+    final base = FirebaseFirestore.instance
+        .collection('partnerships')
+        .where('userA', isEqualTo: uid)
+        .orderBy('createdAt', descending: true);
 
-            final seen = <String>{};
-            final unique = <QueryDocumentSnapshot>[];
-            for (final d in all) {
-              if (seen.add(d.id)) unique.add(d);
-            }
-
-            if (unique.isEmpty) {
-              return _emptyState(
-                icon: Icons.handshake_outlined,
-                text: 'No partnerships yet',
-              );
-            }
-
-            unique.sort((a, b) {
-              final ta = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              final tb = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              if (ta == null && tb == null) return 0;
-              if (ta == null) return 1;
-              if (tb == null) return -1;
-              return tb.compareTo(ta);
-            });
-
-            return ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: unique.length,
-              itemBuilder: (_, i) => _partnershipTile(unique[i]),
-            );
-          },
-        );
-      },
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => base.limit(20),
+      nextPageLoader: (lastDoc) =>
+          base.startAfterDocument(lastDoc).limit(20),
+      itemBuilder: (context, doc) => _partnershipTile(doc),
+      emptyBuilder: (context) => _emptyState(
+        icon: Icons.handshake_outlined,
+        text: 'No partnerships yet',
+      ),
     );
   }
 
-  Widget _partnershipTile(QueryDocumentSnapshot doc) {
+  Widget _partnershipTile(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final userA = data['userA'] as String? ?? '';
     final userB = data['userB'] as String? ?? '';
@@ -634,17 +688,18 @@ class _ActivityScreenState extends State<ActivityScreen> {
     );
   }
 
-  // ============ LOAD POST BY ID ============
+  // ============ FALLBACK: LOAD POST BY ID ============
   Widget _postLoader(String postId) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('posts').doc(postId).snapshots(),
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance
+          .collection('posts').doc(postId).get(),
       builder: (context, snap) {
         if (!snap.hasData || !snap.data!.exists) {
           return const SizedBox.shrink();
         }
         final post = PostModel.fromDoc(snap.data!);
-        return PostCard(post: post);
+        // Disable view tracking — this is a list of posts I already interacted with
+        return PostCard(post: post, recordView: false);
       },
     );
   }
@@ -672,18 +727,8 @@ class _ActivityScreenState extends State<ActivityScreen> {
       ),
     );
   }
-
-  Widget _errorState(String error) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text('Error: $error',
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.red)),
-      ),
-    );
-  }
 }
+
 
 
 // ===== FILE: lib\screens\admin_dashboard_screen.dart =====
@@ -766,55 +811,8 @@ class _OverviewTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Stats grid
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth > 600;
-            final crossCount = isWide ? 4 : 2;
-            return GridView.count(
-              crossAxisCount: crossCount,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 1.3,
-              children: [
-                _statCard(
-                  icon: Icons.people,
-                  label: 'Total Users',
-                  color: Colors.blue,
-                  query: FirebaseFirestore.instance
-                      .collection('users').limit(100).snapshots(),
-                ),
-                _statCard(
-                  icon: Icons.article,
-                  label: 'Total Posts',
-                  color: Colors.green,
-                  query: FirebaseFirestore.instance
-                      .collection('posts').limit(100).snapshots(),
-                ),
-                _statCard(
-                  icon: Icons.report,
-                  label: 'Pending Reports',
-                  color: Colors.orange,
-                  query: FirebaseFirestore.instance
-                      .collection('reports')
-                      .where('status', isEqualTo: 'pending_proof')
-                      .limit(500).snapshots(),
-                ),
-                _statCard(
-                  icon: Icons.warning_amber,
-                  label: 'Cheaters',
-                  color: Colors.red,
-                  query: FirebaseFirestore.instance
-                      .collection('reports')
-                      .where('status', isEqualTo: 'cheater')
-                      .limit(500).snapshots(),
-                ),
-              ],
-            );
-          },
-        ),
+        // Stats grid — uses aggregation count() = 1 read per 1000 docs
+        _StatsGrid(),
         const SizedBox(height: 24),
 
         // Quick actions
@@ -867,42 +865,7 @@ class _OverviewTab extends StatelessWidget {
             fontWeight: FontWeight.bold,
           )),
         const SizedBox(height: 12),
-        StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('reports')
-              .limit(10)
-              .snapshots(),
-          builder: (context, snap) {
-            if (!snap.hasData || snap.data!.docs.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('No recent activity',
-                  style: TextStyle(color: Colors.grey)),
-              );
-            }
-            final docs = snap.data!.docs.toList();
-            docs.sort((a, b) {
-              final ta = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              final tb = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              if (ta == null && tb == null) return 0;
-              if (ta == null) return 1;
-              if (tb == null) return -1;
-              return tb.compareTo(ta);
-            });
-            return Column(
-              children: docs.take(5).map((d) {
-                final data = d.data() as Map<String, dynamic>;
-                return _activityTile(
-                  icon: Icons.report,
-                  color: Colors.orange,
-                  title: '@${data['reporterUsername']} → @${data['reportedUsername']}',
-                  subtitle: data['reason'] ?? '',
-                  time: data['createdAt'] as Timestamp?,
-                );
-              }).toList(),
-            );
-          },
-        ),
+        _RecentActivityList(),
       ],
     );
   }
@@ -1969,6 +1932,274 @@ class _BroadcastTabState extends State<_BroadcastTab> {
 
 
 
+// ============================================================
+// STATS GRID — uses count() aggregation (super cheap!)
+// ============================================================
+class _StatsGrid extends StatefulWidget {
+  @override
+  State<_StatsGrid> createState() => _StatsGridState();
+}
+
+class _StatsGridState extends State<_StatsGrid> {
+  bool _loading = true;
+  int _users = 0;
+  int _posts = 0;
+  int _pending = 0;
+  int _cheaters = 0;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final db = FirebaseFirestore.instance;
+      final results = await Future.wait([
+        db.collection('users').count().get(),
+        db.collection('posts').count().get(),
+        db.collection('reports')
+            .where('status', isEqualTo: 'pending_proof')
+            .count().get(),
+        db.collection('reports')
+            .where('status', isEqualTo: 'cheater')
+            .count().get(),
+      ]);
+      if (mounted) {
+        setState(() {
+          _users = results[0].count ?? 0;
+          _posts = results[1].count ?? 0;
+          _pending = results[2].count ?? 0;
+          _cheaters = results[3].count ?? 0;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 600;
+            final crossCount = isWide ? 4 : 2;
+            return GridView.count(
+              crossAxisCount: crossCount,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.3,
+              children: [
+                _statCard(Icons.people, 'Total Users', Colors.blue, _users),
+                _statCard(Icons.article, 'Total Posts', Colors.green, _posts),
+                _statCard(Icons.report, 'Pending Reports', Colors.orange, _pending),
+                _statCard(Icons.warning_amber, 'Cheaters', Colors.red, _cheaters),
+              ],
+            );
+          },
+        ),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: SizedBox(
+              height: 16, width: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('Error: $_error',
+              style: const TextStyle(color: Colors.red, fontSize: 11)),
+          ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh, size: 14),
+            label: const Text('Refresh stats',
+              style: TextStyle(fontSize: 11)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statCard(IconData icon, String label, Color color, int count) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 28),
+          const SizedBox(height: 8),
+          Text('$count',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            )),
+          const SizedBox(height: 2),
+          Text(label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[700],
+            )),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// One-time load of the 5 most recent reports (no live listener).
+class _RecentActivityList extends StatefulWidget {
+  const _RecentActivityList();
+
+  @override
+  State<_RecentActivityList> createState() => _RecentActivityListState();
+}
+
+class _RecentActivityListState extends State<_RecentActivityList> {
+  bool _loading = true;
+  List<DocumentSnapshot> _docs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      // NO INDEX: fetch recent, sort in Dart
+      final snap = await FirebaseFirestore.instance
+          .collection('reports')
+          .limit(20)
+          .get();
+
+      final docs = snap.docs.toList();
+      docs.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      if (mounted) {
+        setState(() {
+          _docs = docs.take(5).toList();
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[RecentActivity] error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(
+          child: SizedBox(
+            height: 20, width: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_docs.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('No recent activity',
+          style: TextStyle(color: Colors.grey)),
+      );
+    }
+    return Column(
+      children: _docs.map((d) {
+        final data = d.data() as Map<String, dynamic>;
+        return _activityTile(
+          icon: Icons.report,
+          color: Colors.orange,
+          title: '@${data['reporterUsername']} → @${data['reportedUsername']}',
+          subtitle: data['reason'] ?? '',
+          time: data['createdAt'] as Timestamp?,
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _activityTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    Timestamp? time,
+  }) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: color.withValues(alpha: 0.15),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        title: Text(title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13)),
+        subtitle: subtitle.isNotEmpty
+          ? Text(subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12))
+          : null,
+        trailing: time != null
+          ? Text(_timeAgo(time),
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]))
+          : null,
+      ),
+    );
+  }
+
+  String _timeAgo(Timestamp ts) {
+    final diff = DateTime.now().difference(ts.toDate());
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    return '${diff.inDays}d';
+  }
+}
+
+
+
 // ===== FILE: lib\screens\admin_panel_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -2030,91 +2261,190 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: _statuses.map((status) => _buildList(status)).toList(),
+        children: _statuses.map((status) => _ReportsList(
+          key: ValueKey(status ?? 'all'),
+          status: status,
+        )).toList(),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// A single paginated list for one status filter
+// ============================================================
+class _ReportsList extends StatefulWidget {
+  final String? status;
+  const _ReportsList({super.key, required this.status});
+
+  @override
+  State<_ReportsList> createState() => _ReportsListState();
+}
+
+class _ReportsListState extends State<_ReportsList> {
+  // All fetched reports for this filter (cached in memory)
+  List<DocumentSnapshot> _allDocs = [];
+  // How many to display currently
+  int _visibleCount = 20;
+
+  bool _loading = true;
+  String? _error;
+
+  static const int _fetchLimit = 100; // fetch once, paginate client-side
+  static const int _pageSize = 20;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      // NO INDEX: single-field query only
+      final snap = await FirebaseFirestore.instance
+          .collection('reports')
+          .limit(_fetchLimit)
+          .get();
+
+      var docs = snap.docs.toList();
+
+      // Filter in Dart
+      if (widget.status != null) {
+        docs = docs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          return data['status'] == widget.status;
+        }).toList();
+      }
+
+      // Sort by createdAt desc in Dart
+      docs.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      if (mounted) {
+        setState(() {
+          _allDocs = docs;
+          _visibleCount = _pageSize;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[Admin] load error: $e');
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  void _loadMore() {
+    setState(() {
+      _visibleCount = (_visibleCount + _pageSize).clamp(0, _allDocs.length);
+    });
+  }
+
+  bool get _hasMore => _visibleCount < _allDocs.length;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 50, color: Colors.red),
+              const SizedBox(height: 12),
+              Text(_error!, textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadAll,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_allDocs.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox, size: 60, color: Colors.grey),
+            SizedBox(height: 12),
+            Text('No reports in this category',
+              style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
+    final visible = _allDocs.take(_visibleCount).toList();
+    final itemCount = visible.length + (_hasMore ? 1 : 0);
+
+    return RefreshIndicator(
+      onRefresh: _loadAll,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(12),
+        itemCount: itemCount,
+        itemBuilder: (context, i) {
+          if (i == visible.length) return _buildFooter();
+          return _reportCard(visible[i]);
+        },
       ),
     );
   }
 
-  Widget _buildList(String? status) {
-    // Simple query — no filter, no orderBy → no composite index needed.
-    // We filter + sort in Dart.
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('reports')
-          .limit(500)
-          .snapshots(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text('Error: ${snap.error}',
-                style: const TextStyle(color: Colors.red)),
+  Widget _buildFooter() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: Column(
+          children: [
+            Text(
+              'Showing $_visibleCount of ${_allDocs.length}',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),
-          );
-        }
-        if (!snap.hasData || snap.data!.docs.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.inbox, size: 60, color: Colors.grey),
-                SizedBox(height: 12),
-                Text('No reports in this category',
-                  style: TextStyle(color: Colors.grey)),
-              ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _loadMore,
+              icon: const Icon(Icons.expand_more, size: 18),
+              label: const Text('Load More'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              ),
             ),
-          );
-        }
-
-        // ---- FILTER IN DART ----
-        var docs = snap.data!.docs.toList();
-        if (status != null) {
-          docs = docs.where((d) {
-            final data = d.data() as Map<String, dynamic>;
-            return data['status'] == status;
-          }).toList();
-        }
-
-        // ---- SORT IN DART (newest first) ----
-        docs.sort((a, b) {
-          final aData = a.data() as Map<String, dynamic>;
-          final bData = b.data() as Map<String, dynamic>;
-          final ta = aData['createdAt'] as Timestamp?;
-          final tb = bData['createdAt'] as Timestamp?;
-          if (ta == null && tb == null) return 0;
-          if (ta == null) return 1;
-          if (tb == null) return -1;
-          return tb.compareTo(ta);
-        });
-
-        if (docs.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.inbox, size: 60, color: Colors.grey),
-                SizedBox(height: 12),
-                Text('No reports in this category',
-                  style: TextStyle(color: Colors.grey)),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: docs.length,
-          itemBuilder: (_, i) => _reportCard(docs[i]),
-        );
-      },
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _reportCard(QueryDocumentSnapshot doc) {
+  // ============ REPORT CARD ============
+  Widget _reportCard(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final status = data['status'] ?? 'pending_proof';
     final reporterUsername = data['reporterUsername'] ?? 'Unknown';
@@ -2137,24 +2467,17 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row
             Row(
               children: [
                 _statusBadge(status),
                 const Spacer(),
                 if (createdAt != null)
-                  Text(
-                    _timeAgo(createdAt),
+                  Text(_timeAgo(createdAt),
                     style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey[600],
-                    ),
-                  ),
+                      fontSize: 11, color: Colors.grey[600])),
               ],
             ),
             const SizedBox(height: 10),
-
-            // Users involved
             Row(
               children: [
                 Expanded(
@@ -2176,21 +2499,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               ],
             ),
             const SizedBox(height: 12),
-
-            // Reason
             _section('Reason', reason),
             const SizedBox(height: 8),
-
-            // Reporter proof
             _section('Reporter Proof', reporterProof),
             const SizedBox(height: 8),
-
-            // Accused proof
             if (reportedProof.isNotEmpty)
-              _section('Accused Proof', reportedProof,
-                highlight: true),
-
-            // Deadlines
+              _section('Accused Proof', reportedProof, highlight: true),
             const SizedBox(height: 10),
             if (status == 'pending_proof' && deadline != null)
               Row(
@@ -2224,8 +2538,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                 ],
               ),
             const SizedBox(height: 14),
-
-            // Actions
             _actionRow(doc, status),
           ],
         ),
@@ -2243,32 +2555,26 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       children: [
         Text(label,
           style: TextStyle(
-            fontSize: 10,
-            color: color,
+            fontSize: 10, color: color,
             fontWeight: FontWeight.bold,
           )),
         Text('@$username',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          )),
+            fontSize: 13, fontWeight: FontWeight.bold)),
       ],
     );
   }
 
-  Widget _section(String title, String content,
-      {bool highlight = false}) {
+  Widget _section(String title, String content, {bool highlight = false}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: highlight ? Colors.green[50] : Colors.grey[100],
         borderRadius: BorderRadius.circular(8),
-        border: highlight
-            ? Border.all(color: Colors.green[200]!)
-            : null,
+        border: highlight ? Border.all(color: Colors.green[200]!) : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2277,13 +2583,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.bold,
-              color: highlight
-                  ? Colors.green[800]
-                  : Colors.grey[700],
+              color: highlight ? Colors.green[800] : Colors.grey[700],
             )),
           const SizedBox(height: 4),
-          Text(content,
-            style: const TextStyle(fontSize: 13, height: 1.4)),
+          Text(content, style: const TextStyle(fontSize: 13, height: 1.4)),
         ],
       ),
     );
@@ -2296,39 +2599,27 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
 
     switch (status) {
       case 'pending_proof':
-        color = Colors.orange;
-        label = 'PENDING PROOF';
-        icon = Icons.hourglass_top;
-        break;
+        color = Colors.orange; label = 'PENDING PROOF';
+        icon = Icons.hourglass_top; break;
       case 'under_review':
-        color = Colors.blue;
-        label = 'UNDER REVIEW';
-        icon = Icons.search;
-        break;
+        color = Colors.blue; label = 'UNDER REVIEW';
+        icon = Icons.search; break;
       case 'cheater':
-        color = Colors.red;
-        label = 'CHEATER';
-        icon = Icons.warning_amber;
-        break;
+        color = Colors.red; label = 'CHEATER';
+        icon = Icons.warning_amber; break;
       case 'resolved':
-        color = Colors.green;
-        label = 'RESOLVED';
-        icon = Icons.check_circle;
-        break;
+        color = Colors.green; label = 'RESOLVED';
+        icon = Icons.check_circle; break;
       case 'deleted':
-        color = Colors.grey;
-        label = 'DELETED';
-        icon = Icons.delete;
-        break;
+        color = Colors.grey; label = 'DELETED';
+        icon = Icons.delete; break;
       default:
-        color = Colors.grey;
-        label = status.toUpperCase();
+        color = Colors.grey; label = status.toUpperCase();
         icon = Icons.help;
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
@@ -2341,58 +2632,49 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
           const SizedBox(width: 4),
           Text(label,
             style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: color,
-            )),
+              fontSize: 10, fontWeight: FontWeight.bold, color: color)),
         ],
       ),
     );
   }
 
-  Widget _actionRow(QueryDocumentSnapshot doc, String status) {
+  Widget _actionRow(DocumentSnapshot doc, String status) {
     return Wrap(
       spacing: 6,
       runSpacing: 6,
       children: [
         if (status == 'pending_proof' || status == 'under_review') ...[
           _actionBtn(
-            icon: Icons.check_circle,
-            label: 'Resolve',
+            icon: Icons.check_circle, label: 'Resolve',
             color: Colors.green,
             onTap: () => _resolve(doc),
           ),
           _actionBtn(
-            icon: Icons.warning_amber,
-            label: 'Force Cheater',
+            icon: Icons.warning_amber, label: 'Force Cheater',
             color: Colors.red,
             onTap: () => _forceCheater(doc),
           ),
           if (status == 'pending_proof')
             _actionBtn(
-              icon: Icons.timer,
-              label: 'Extend +24h',
+              icon: Icons.timer, label: 'Extend +24h',
               color: Colors.orange,
               onTap: () => _extendDeadline(doc),
             ),
         ],
         if (status == 'cheater') ...[
           _actionBtn(
-            icon: Icons.restore,
-            label: 'Restore',
+            icon: Icons.restore, label: 'Restore',
             color: Colors.green,
             onTap: () => _restoreUser(doc),
           ),
           _actionBtn(
-            icon: Icons.delete_forever,
-            label: 'Delete Now',
+            icon: Icons.delete_forever, label: 'Delete Now',
             color: Colors.red,
             onTap: () => _deleteNow(doc),
           ),
         ],
         _actionBtn(
-          icon: Icons.delete_outline,
-          label: 'Remove Report',
+          icon: Icons.delete_outline, label: 'Remove Report',
           color: Colors.grey,
           onTap: () => _deleteReport(doc),
         ),
@@ -2410,8 +2692,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 10, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
@@ -2424,10 +2705,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
             const SizedBox(width: 5),
             Text(label,
               style: TextStyle(
-                fontSize: 11,
-                color: color,
-                fontWeight: FontWeight.bold,
-              )),
+                fontSize: 11, color: color,
+                fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -2436,14 +2715,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
 
   // ============ ACTIONS ============
 
-  Future<void> _resolve(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Resolve Report',
-      'This will mark the report as resolved and clear any cheater status. '
-      'The reported user will not be penalized.',
-    );
+  Future<void> _resolve(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Resolve Report',
+      'Mark this report as resolved? The reported user will not be penalized.');
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
     try {
       await doc.reference.update({
@@ -2451,179 +2726,126 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         'resolvedAt': FieldValue.serverTimestamp(),
         'resolvedBy': FirebaseAuth.instance.currentUser?.uid,
       });
-
-      // Un-ban the reported user if they were marked
       if (data['reportedId'] != null) {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(data['reportedId'])
-            .update({
-          'isBanned': false,
-          'isCheater': false,
+        await FirebaseFirestore.instance.collection('users')
+            .doc(data['reportedId']).update({
+          'isBanned': false, 'isCheater': false,
         }).catchError((_) {});
       }
-
-      // Notify both parties
-      await _notify(
-        data['reporterId'],
-        'Report resolved',
-        'Your report against @${data['reportedUsername']} has been resolved. '
-        'The user was not penalized.',
-      );
-      await _notify(
-        data['reportedId'],
-        'Report resolved',
-        'The report against you has been resolved. No action will be taken.',
-      );
-
+      await _notify(data['reporterId'], 'Report resolved',
+        'Your report against @${data['reportedUsername']} has been resolved.');
+      await _notify(data['reportedId'], 'Report resolved',
+        'The report against you has been resolved.');
       _showSnack('Report resolved', Colors.green);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _forceCheater(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Force Cheater Status',
-      'This immediately marks the reported user as a cheater. '
-      'They will appear on the Cheater Board and their account will be '
-      'deleted in 36 hours.',
-      confirmColor: Colors.red,
-    );
+  Future<void> _forceCheater(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Force Cheater Status',
+      'Immediately mark as cheater? Account deleted in 36 hours.',
+      confirmColor: Colors.red);
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
     final reportedId = data['reportedId'] as String;
     final reportedUsername = data['reportedUsername'] as String;
-
     try {
-      final now = DateTime.now();
-      final deleteAt = now.add(const Duration(hours: 36));
-
+      final deleteAt = DateTime.now().add(const Duration(hours: 36));
       await doc.reference.update({
         'status': 'cheater',
         'cheaterAt': FieldValue.serverTimestamp(),
         'deleteAt': Timestamp.fromDate(deleteAt),
         'forcedByAdmin': true,
       });
-
-      await FirebaseFirestore.instance
-          .collection('users').doc(reportedId).update({
-        'isBanned': true,
-        'isCheater': true,
+      await FirebaseFirestore.instance.collection('users')
+          .doc(reportedId).update({
+        'isBanned': true, 'isCheater': true,
       });
-
-      // Notify all past partners
       await _notifyPartners(reportedId, reportedUsername);
-
-      // Notify reporter
-      await _notify(
-        data['reporterId'],
-        'Report accepted',
-        '@$reportedUsername has been marked as a cheater by admin.',
-      );
-
+      await _notify(data['reporterId'], 'Report accepted',
+        '@$reportedUsername has been marked as a cheater.');
       _showSnack('User marked as cheater', Colors.red);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _extendDeadline(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Extend Deadline',
-      'Add 24 more hours to the proof deadline?',
-    );
+  Future<void> _extendDeadline(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Extend Deadline',
+      'Add 24 more hours to the proof deadline?');
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
-    final currentDeadline =
-        (data['proofDeadline'] as Timestamp?)?.toDate() ?? DateTime.now();
-    final newDeadline = currentDeadline.add(const Duration(hours: 24));
-
+    final current = (data['proofDeadline'] as Timestamp?)?.toDate()
+        ?? DateTime.now();
+    final newDeadline = current.add(const Duration(hours: 24));
     try {
       await doc.reference.update({
         'proofDeadline': Timestamp.fromDate(newDeadline),
       });
       _showSnack('Deadline extended by 24h', Colors.orange);
+      if (mounted) setState(() {});
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _restoreUser(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Restore User',
-      'This will remove the cheater status and restore the user. '
-      'Use this if the report was a mistake.',
-    );
+  Future<void> _restoreUser(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Restore User',
+      'Remove cheater status and restore the user?');
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
-    final reportedId = data['reportedId'] as String;
-
     try {
       await doc.reference.update({
         'status': 'resolved',
         'restoredAt': FieldValue.serverTimestamp(),
         'restoredByAdmin': true,
       });
-
-      await FirebaseFirestore.instance
-          .collection('users').doc(reportedId).update({
-        'isBanned': false,
-        'isCheater': false,
+      await FirebaseFirestore.instance.collection('users')
+          .doc(data['reportedId']).update({
+        'isBanned': false, 'isCheater': false,
       });
-
-      await _notify(
-        reportedId,
-        'Account restored',
-        'Your cheater status has been removed. You can use the app normally.',
-      );
-
+      await _notify(data['reportedId'], 'Account restored',
+        'Your cheater status has been removed.');
       _showSnack('User restored', Colors.green);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _deleteNow(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Delete Account Now',
-      'This immediately deletes the user account. This cannot be undone.',
-      confirmColor: Colors.red,
-    );
+  Future<void> _deleteNow(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Delete Account Now',
+      'This immediately deletes the user account. Cannot be undone.',
+      confirmColor: Colors.red);
     if (confirmed != true) return;
-
     final data = doc.data() as Map<String, dynamic>;
-    final reportedId = data['reportedId'] as String;
-
     try {
       await doc.reference.update({
         'status': 'deleted',
         'deletedAt': FieldValue.serverTimestamp(),
         'deletedByAdmin': true,
       });
-      await FirebaseFirestore.instance
-          .collection('users').doc(reportedId).delete();
-
+      await FirebaseFirestore.instance.collection('users')
+          .doc(data['reportedId']).delete();
       _showSnack('Account deleted', Colors.red);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
   }
 
-  Future<void> _deleteReport(QueryDocumentSnapshot doc) async {
-    final confirmed = await _confirm(
-      'Remove Report',
+  Future<void> _deleteReport(DocumentSnapshot doc) async {
+    final confirmed = await _confirm('Remove Report',
       'This deletes the report entirely. Use only for spam or abuse.',
-      confirmColor: Colors.grey,
-    );
+      confirmColor: Colors.grey);
     if (confirmed != true) return;
-
     try {
       await doc.reference.delete();
       _showSnack('Report removed', Colors.grey);
+      if (mounted) setState(() => _allDocs.remove(doc));
     } catch (e) {
       _showSnack('Error: $e', Colors.red);
     }
@@ -2661,15 +2883,23 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
   Future<void> _notify(String? uid, String title, String body) async {
     if (uid == null) return;
     try {
-      await FirebaseFirestore.instance
-          .collection('users').doc(uid)
-          .collection('notifications').add({
-        'type': 'admin_action',
-        'title': title,
-        'body': body,
-        'isRead': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      final batch = FirebaseFirestore.instance.batch();
+      batch.set(
+        FirebaseFirestore.instance.collection('users').doc(uid)
+            .collection('notifications').doc(),
+        {
+          'type': 'admin_action',
+          'title': title,
+          'body': body,
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+      batch.update(
+        FirebaseFirestore.instance.collection('users').doc(uid),
+        {'unreadNotificationCount': FieldValue.increment(1)},
+      );
+      await batch.commit();
     } catch (_) {}
   }
 
@@ -2677,12 +2907,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     try {
       final asA = await FirebaseFirestore.instance
           .collection('partnerships')
-          .where('userA', isEqualTo: cheaterId)
-          .get();
+          .where('userA', isEqualTo: cheaterId).get();
       final asB = await FirebaseFirestore.instance
           .collection('partnerships')
-          .where('userB', isEqualTo: cheaterId)
-          .get();
+          .where('userB', isEqualTo: cheaterId).get();
 
       final partnerIds = <String>{};
       for (final p in asA.docs) {
@@ -2694,12 +2922,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       partnerIds.remove(cheaterId);
 
       for (final pid in partnerIds) {
-        await _notify(
-          pid,
-          'A past partner was flagged',
-          '@$cheaterUsername has been marked as a cheater. '
-          'If you had a partnership with them, review your agreements.',
-        );
+        await _notify(pid, 'A past partner was flagged',
+          '@$cheaterUsername has been marked as a cheater.');
       }
     } catch (_) {}
   }
@@ -2726,8 +2950,6 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     return '${diff.inHours}h';
   }
 }
-
-
 
 
 // ===== FILE: lib\screens\blocked_users_screen.dart =====
@@ -2900,6 +3122,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/current_user_cache.dart';
 
 // ============================================================
 // CHANGE EMAIL
@@ -3339,6 +3562,9 @@ class _ChangeUsernameScreenState extends State<ChangeUsernameScreen> {
         'lastUsernameChange': FieldValue.serverTimestamp(),
       });
 
+      // Update the cache immediately
+      CurrentUserCache.set(newUsername);
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -3502,6 +3728,7 @@ class ViewContractScreen extends StatelessWidget {
     );
   }
 }
+
 
 
 
@@ -3797,6 +4024,7 @@ class _ChatRow extends StatelessWidget {
 
 
 // ===== FILE: lib\screens\chat_screen.dart =====
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -3831,6 +4059,14 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _requesting = false;
   late String _chatId;
   late String _currentUserId;
+  bool _isUserA = false;   // set once on init
+  late final Stream<QuerySnapshot> _messagesStream;
+  bool _firstLoad = true;
+  int _lastMessageCount = 0;
+  bool _markReadInFlight = false;  // debounce
+  DateTime? _lastMarkedRead;
+  StreamSubscription<DocumentSnapshot>? _chatDocSub;
+  final ValueNotifier<Timestamp?> _otherLastRead = ValueNotifier(null);       // avoid repeat writes
 
   @override
   void initState() {
@@ -3838,7 +4074,31 @@ class _ChatScreenState extends State<ChatScreen> {
     _currentUserId = FirebaseAuth.instance.currentUser!.uid;
     final ids = [_currentUserId, widget.otherUserId]..sort();
     _chatId = ids.join('_');
-    _ensureChatExists().then((_) => _markAllMessagesAsRead());
+    _isUserA = ids.first == _currentUserId;
+
+    // ✅ Create the messages stream ONCE so it isn't recreated
+    // every time the outer chat-doc StreamBuilder rebuilds.
+    _messagesStream = FirebaseFirestore.instance
+        .collection('chats').doc(_chatId)
+        .collection('messages')
+        .orderBy('timestamp', descending: false)
+        .limitToLast(50)
+        .snapshots();
+
+    // ✅ Auto-mark read when new incoming messages arrive
+    _messagesStream.listen((snap) {
+      if (!mounted) return;
+      final docs = snap.docs;
+      if (docs.length <= _lastMessageCount) return;
+      _lastMessageCount = docs.length;
+      final last = docs.last.data() as Map<String, dynamic>;
+      final sender = last['senderId'];
+      if (sender != _currentUserId && sender != 'system') {
+        _markRead();
+      }
+    });
+
+    _ensureChatExists().then((_) => _markRead());
   }
 
   Future<void> _ensureChatExists() async {
@@ -3846,90 +4106,52 @@ class _ChatScreenState extends State<ChatScreen> {
     final doc = await ref.get();
     if (!doc.exists) {
       await ref.set({
-        'userA': _currentUserId,
-        'userB': widget.otherUserId,
+        'userA': _isUserA ? _currentUserId : widget.otherUserId,
+        'userB': _isUserA ? widget.otherUserId : _currentUserId,
         'lastMessage': '',
         'lastMessageTime': FieldValue.serverTimestamp(),
         'lastMessageSenderId': '',
         'unreadForUserA': 0,
         'unreadForUserB': 0,
+        'lastReadByUserA': null,
+        'lastReadByUserB': null,
         'createdAt': FieldValue.serverTimestamp(),
         'partnershipStatus': 'none',
       });
     }
   }
 
-  Future<void> _markAllMessagesAsRead() async {
+  /// Debounced mark-read. Only writes if not called in the last 2 seconds.
+  Future<void> _markRead() async {
+    if (_markReadInFlight) return;
+    final now = DateTime.now();
+    if (_lastMarkedRead != null &&
+        now.difference(_lastMarkedRead!).inSeconds < 5) {
+      return; // skip — we just marked
+    }
+    _markReadInFlight = true;
     try {
       final chatRef = FirebaseFirestore.instance
           .collection('chats').doc(_chatId);
 
-      // ---- ALWAYS reset my counter, regardless of message state ----
-      final chatSnap = await chatRef.get();
-      if (chatSnap.exists) {
-        final data = chatSnap.data()!;
-        final isUserA = data['userA'] == _currentUserId;
-        final myCounterKey = isUserA ? 'unreadForUserA' : 'unreadForUserB';
-        final currentVal = (data[myCounterKey] ?? 0) as int;
-        if (currentVal != 0) {
-          await chatRef.update({myCounterKey: 0});
-          debugPrint('[Chat] reset $myCounterKey from $currentVal to 0');
-        } else {
-          debugPrint('[Chat] $myCounterKey already 0');
-        }
-      }
+      // ✅ Don't write if the counter is already 0 (prevents feedback loop)
+      final checkSnap = await chatRef.get();
+      final currentUnread = _isUserA
+          ? (checkSnap.data()?['unreadForUserA'] ?? 0)
+          : (checkSnap.data()?['unreadForUserB'] ?? 0);
+      if (currentUnread == 0) return;
 
-      // ---- Mark individual messages as read (for ✓✓ receipts) ----
-      final messagesRef = FirebaseFirestore.instance
-          .collection('chats').doc(_chatId)
-          .collection('messages');
-      final all = await messagesRef.limit(50).get();
-      final toUpdate = all.docs.where((d) {
-        final data = d.data();
-        return data['senderId'] != _currentUserId &&
-               data['senderId'] != 'system' &&
-               data['isRead'] != true;
-      }).toList();
-      if (toUpdate.isEmpty) return;
-      final batch = FirebaseFirestore.instance.batch();
-      for (final doc in toUpdate) {
-        batch.update(doc.reference, {
-          'isRead': true,
-          'readAt': FieldValue.serverTimestamp(),
-        });
-      }
-      await batch.commit();
-      debugPrint('[Chat] marked ${toUpdate.length} messages as read');
+      await chatRef.update({
+        _isUserA ? 'lastReadByUserA' : 'lastReadByUserB':
+            FieldValue.serverTimestamp(),
+        _isUserA ? 'unreadForUserA' : 'unreadForUserB': 0,
+      });
+      _lastMarkedRead = now;
+      debugPrint('[Chat] marked read');
     } catch (e) {
       debugPrint('[Chat] mark read error: $e');
-    }
-  }
-
-  Future<void> _markSingleAsRead(String messageId) async {
-    try {
-      await FirebaseFirestore.instance
-          .collection('chats').doc(_chatId)
-          .collection('messages').doc(messageId)
-          .update({
-        'isRead': true,
-        'readAt': FieldValue.serverTimestamp(),
-      });
-      // Also reset the chat doc's counter for me so the badge clears live
-      final chatRef = FirebaseFirestore.instance
-          .collection('chats').doc(_chatId);
-      final chatSnap = await chatRef.get();
-      if (chatSnap.exists) {
-        final data = chatSnap.data()!;
-        final isUserA = data['userA'] == _currentUserId;
-        final key = isUserA ? 'unreadForUserA' : 'unreadForUserB';
-        final val = (data[key] ?? 0) as int;
-        if (val != 0) {
-          await chatRef.update({key: 0});
-          debugPrint('[Chat] live reset $key from $val to 0');
-        }
-      }
-    } catch (e) {
-      debugPrint('[Chat] mark single error: $e');
+    } finally {
+      _markReadInFlight = false;
     }
   }
 
@@ -3972,29 +4194,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() => _sending = true);
     try {
-      // Add the message
       await FirebaseFirestore.instance
           .collection('chats').doc(_chatId)
           .collection('messages').add({
         'senderId': _currentUserId,
         'text': text,
         'timestamp': FieldValue.serverTimestamp(),
-        'isRead': false,
       });
 
-      // Get chat doc to know who's userA / userB
       final chatRef = FirebaseFirestore.instance
           .collection('chats').doc(_chatId);
-      final chatSnap = await chatRef.get();
-      final chatData = chatSnap.data() ?? {};
-      final isUserA = chatData['userA'] == _currentUserId;
 
-      // Increment the OTHER user's unread counter
       await chatRef.update({
         'lastMessage': text,
         'lastMessageTime': FieldValue.serverTimestamp(),
         'lastMessageSenderId': _currentUserId,
-        isUserA ? 'unreadForUserB' : 'unreadForUserA': FieldValue.increment(1),
+        _isUserA ? 'unreadForUserB' : 'unreadForUserA':
+            FieldValue.increment(1),
       });
 
       _controller.clear();
@@ -4039,7 +4255,6 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // ---- SCROLLABLE CONTENT ----
                   Flexible(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
@@ -4047,7 +4262,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // Title
                           const Text('Propose Partnership?',
                             style: TextStyle(
                               fontSize: 20,
@@ -4060,8 +4274,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             style: const TextStyle(fontSize: 14),
                           ),
                           const SizedBox(height: 16),
-
-                          // Label
                           const Text(
                             'What is this partnership for?',
                             style: TextStyle(
@@ -4070,8 +4282,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           ),
                           const SizedBox(height: 8),
-
-                          // Text field
                           TextField(
                             controller: reasonController,
                             maxLength: 200,
@@ -4088,8 +4298,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-
-                          // Warning
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
@@ -4120,8 +4328,6 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                   ),
-
-                  // ---- FIXED ACTION BUTTONS ----
                   Padding(
                     padding: const EdgeInsets.all(16),
                     child: Row(
@@ -4267,7 +4473,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 60,   // slightly taller for 2 lines
+        toolbarHeight: 60,
         leadingWidth: 40,
         titleSpacing: 0,
         title: Row(
@@ -4291,7 +4497,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Username
                   Text(
                     widget.otherUsername,
                     maxLines: 1,
@@ -4304,7 +4509,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                   const SizedBox(height: 2),
-                  // Partnership count — single line, small
                   GestureDetector(
                     onTap: _showPartnerships,
                     behavior: HitTestBehavior.opaque,
@@ -4326,34 +4530,44 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          // View partnerships history
           IconButton(
             icon: const Icon(Icons.history, size: 20),
             tooltip: 'Partnership history',
             onPressed: () => _showPartnerships(),
           ),
-          // Report button (only visible if partnered before)
           _ReportMenuButton(
             currentUserId: _currentUserId,
             otherUserId: widget.otherUserId,
             otherUsername: widget.otherUsername,
           ),
-          // Partnerup button
-          TextButton.icon(
-            onPressed: _requesting ? null : _proposePartnership,
-            icon: _requesting
-              ? SizedBox(
-                  height: 16, width: 16,
-                  child: CircularProgressIndicator(
-                    color: Theme.of(context).cardColor, strokeWidth: 2))
-              : Icon(Icons.handshake,
-                  color: Theme.of(context).cardColor, size: 18),
-            label: Text('Partnerup',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
-                fontSize: 11,
-              )),
-          ),
+          if (MediaQuery.of(context).size.width >= 380)
+            TextButton.icon(
+              onPressed: _requesting ? null : _proposePartnership,
+              icon: _requesting
+                ? SizedBox(
+                    height: 16, width: 16,
+                    child: CircularProgressIndicator(
+                      color: Theme.of(context).cardColor, strokeWidth: 2))
+                : Icon(Icons.handshake,
+                    color: Theme.of(context).cardColor, size: 18),
+              label: Text('Partnerup',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontSize: 11,
+                )),
+            )
+          else
+            IconButton(
+              tooltip: 'Partnerup',
+              onPressed: _requesting ? null : _proposePartnership,
+              icon: _requesting
+                ? const SizedBox(
+                    height: 16, width: 16,
+                    child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2))
+                : const Icon(Icons.handshake,
+                    color: Colors.white, size: 20),
+            ),
         ],
       ),
       body: Column(
@@ -4414,17 +4628,16 @@ class _ChatScreenState extends State<ChatScreen> {
               );
             },
           ),
+
+          // ---- Messages list (single StreamBuilder, no nesting) ----
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('chats').doc(_chatId)
-                  .collection('messages')
-                  .orderBy('timestamp', descending: false)
-                  .limitToLast(50)
-                  .snapshots(),
+              stream: _messagesStream,
               builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                if (snap.connectionState == ConnectionState.waiting &&
+                    _firstLoad) {
+                  return const Center(
+                    child: CircularProgressIndicator());
                 }
                 if (!snap.hasData || snap.data!.docs.isEmpty) {
                   return const Center(
@@ -4433,28 +4646,22 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
 
                 final messages = snap.data!.docs;
+                _firstLoad = false;
 
-                for (final doc in messages) {
-                  final m = doc.data() as Map<String, dynamic>;
-                  final sender = m['senderId'];
-                  final read = m['isRead'] ?? false;
-                  if (sender != _currentUserId &&
-                      sender != 'system' &&
-                      read != true) {
-                    _markSingleAsRead(doc.id);
-                  }
-                }
+                final otherLastRead = _otherLastRead.value;
 
                 final items = <_ChatItem>[];
                 for (int i = 0; i < messages.length; i++) {
-                  final m = messages[i].data() as Map<String, dynamic>;
+                  final m = messages[i].data()
+                      as Map<String, dynamic>;
                   final ts = m['timestamp'] as Timestamp?;
                   final senderId = m['senderId'] ?? '';
                   final isSystem = senderId == 'system';
 
                   if (i == 0 || !_isSameDay(
                       (messages[i - 1].data()
-                          as Map<String, dynamic>)['timestamp'] as Timestamp?,
+                          as Map<String, dynamic>)['timestamp']
+                          as Timestamp?,
                       ts)) {
                     if (ts != null) {
                       items.add(_ChatItem(
@@ -4481,12 +4688,18 @@ class _ChatScreenState extends State<ChatScreen> {
                       timestamp: ts,
                     ));
                   } else {
+                    final isMyMessage = senderId == _currentUserId;
+                    final isRead = isMyMessage &&
+                        otherLastRead != null &&
+                        ts != null &&
+                        !ts.toDate().isAfter(
+                            otherLastRead.toDate());
                     items.add(_ChatItem(
                       messageId: messages[i].id,
                       senderId: senderId,
                       text: m['text'] ?? '',
                       timestamp: ts,
-                      isRead: m['isRead'] ?? false,
+                      isRead: isRead,
                     ));
                   }
                 }
@@ -4500,11 +4713,14 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
+
+          // Input
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: Theme.of(context).scaffoldBackgroundColor,
-              border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(top: BorderSide(
+                color: Theme.of(context).dividerColor)),
             ),
             child: SafeArea(
               child: Row(
@@ -4636,6 +4852,8 @@ class _ChatScreenState extends State<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(item.text,
+              softWrap: true,
+              overflow: TextOverflow.clip,
               style: TextStyle(
                 color: isMe
                     ? Colors.white
@@ -4743,11 +4961,6 @@ class PartnershipCountLabel extends StatelessWidget {
   }
 }
 
-
-
-
-
-
 /// Shows a report icon ONLY if the current user has at least 1 partnership
 /// with the other user. Clicking opens the Report Sheet.
 class _ReportMenuButton extends StatelessWidget {
@@ -4771,7 +4984,6 @@ class _ReportMenuButton extends StatelessWidget {
       builder: (context, snap) {
         if (!snap.hasData) return const SizedBox.shrink();
 
-        // Count partnerships between these two users
         int partnershipCount = 0;
         for (final doc in snap.data!.docs) {
           final d = doc.data() as Map<String, dynamic>;
@@ -4784,7 +4996,7 @@ class _ReportMenuButton extends StatelessWidget {
         }
 
         if (partnershipCount == 0) {
-          return const SizedBox.shrink(); // no partnership → no report
+          return const SizedBox.shrink();
         }
 
         return PopupMenuButton<String>(
@@ -4885,22 +5097,87 @@ class _ReportMenuButton extends StatelessWidget {
 
 
 
-
-
-
-
-
-
-
-
-
 // ===== FILE: lib\screens\cheater_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
-class CheaterScreen extends StatelessWidget {
+class CheaterScreen extends StatefulWidget {
   const CheaterScreen({super.key});
+
+  @override
+  State<CheaterScreen> createState() => _CheaterScreenState();
+}
+
+class _CheaterScreenState extends State<CheaterScreen> {
+  List<DocumentSnapshot> _allDocs = [];
+  int _visibleCount = 20;
+  bool _loading = true;
+  String? _error;
+
+  static const int _fetchLimit = 100;
+  static const int _pageSize = 20;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      // NO INDEX: single-field query only
+      final snap = await FirebaseFirestore.instance
+          .collection('reports')
+          .limit(_fetchLimit)
+          .get();
+
+      // Filter + sort in Dart
+      var docs = snap.docs.where((d) {
+        final data = d.data() as Map<String, dynamic>;
+        return data['status'] == 'cheater';
+      }).toList();
+
+      docs.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['cheaterAt']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['cheaterAt']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      if (mounted) {
+        setState(() {
+          _allDocs = docs;
+          _visibleCount = _pageSize;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[CheaterBoard] error: $e');
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  void _loadMore() {
+    setState(() {
+      _visibleCount = (_visibleCount + _pageSize).clamp(0, _allDocs.length);
+    });
+  }
+
+  bool get _hasMore => _visibleCount < _allDocs.length;
 
   @override
   Widget build(BuildContext context) {
@@ -4909,119 +5186,131 @@ class CheaterScreen extends StatelessWidget {
         title: const Text('Cheater Board',
           style: TextStyle(fontWeight: FontWeight.bold)),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('reports')
-            .limit(500)
-            .snapshots(),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: _buildBody(),
+    );
+  }
 
-          if (snap.hasError) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('Error loading reports',
-                  style: TextStyle(color: Colors.red)),
-              ),
-            );
-          }
-
-          if (!snap.hasData || snap.data!.docs.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.verified_user,
-                    size: 80, color: Colors.green),
-                  SizedBox(height: 16),
-                  Text('Cheater Board is empty',
-                    style: TextStyle(fontSize: 18, color: Colors.grey)),
-                  SizedBox(height: 8),
-                  Text('No users have been flagged recently.',
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
-                ],
-              ),
-            );
-          }
-
-          // ---- FILTER IN DART: only cheaters ----
-          final docs = snap.data!.docs.where((d) {
-            final data = d.data() as Map<String, dynamic>;
-            return data['status'] == 'cheater';
-          }).toList();
-
-          if (docs.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.verified_user,
-                    size: 80, color: Colors.green),
-                  SizedBox(height: 16),
-                  Text('Cheater Board is empty',
-                    style: TextStyle(fontSize: 18, color: Colors.grey)),
-                ],
-              ),
-            );
-          }
-
-          // Sort by cheaterAt desc
-          docs.sort((a, b) {
-            final ta = (a.data() as Map<String, dynamic>)['cheaterAt'] as Timestamp?;
-            final tb = (b.data() as Map<String, dynamic>)['cheaterAt'] as Timestamp?;
-            if (ta == null && tb == null) return 0;
-            if (ta == null) return 1;
-            if (tb == null) return -1;
-            return tb.compareTo(ta);
-          });
-
-          return Column(
+  Widget _buildBody() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.all(12),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.red[100]!),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning_amber,
-                      color: Colors.red, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'These users broke the partnership contract. '
-                        'Their accounts will be deleted after 36 hours.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.red[900],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 20),
-                  itemCount: docs.length,
-                  itemBuilder: (_, i) => _cheaterCard(docs[i]),
-                ),
+              const Icon(Icons.error_outline, size: 50, color: Colors.red),
+              const SizedBox(height: 12),
+              Text(_error!, textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadAll,
+                child: const Text('Retry'),
               ),
             ],
-          );
-        },
+          ),
+        ),
+      );
+    }
+
+    if (_allDocs.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.verified_user, size: 80, color: Colors.green),
+              SizedBox(height: 16),
+              Text('Cheater Board is empty',
+                style: TextStyle(fontSize: 18, color: Colors.grey)),
+              SizedBox(height: 8),
+              Text('No users have been flagged recently.',
+                style: TextStyle(fontSize: 13, color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final visible = _allDocs.take(_visibleCount).toList();
+    final itemCount = visible.length + (_hasMore ? 1 : 0);
+
+    return RefreshIndicator(
+      onRefresh: _loadAll,
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.red[100]!),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber,
+                  color: Colors.red, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'These users broke the partnership contract. '
+                    'Their accounts will be deleted after 36 hours.',
+                    style: TextStyle(fontSize: 12, color: Colors.red[900]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.only(bottom: 20),
+              itemCount: itemCount,
+              itemBuilder: (context, i) {
+                if (i == visible.length) return _buildFooter();
+                return _cheaterCard(visible[i]);
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _cheaterCard(QueryDocumentSnapshot doc) {
+  Widget _buildFooter() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: Column(
+          children: [
+            Text(
+              'Showing $_visibleCount of ${_allDocs.length}',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _loadMore,
+              icon: const Icon(Icons.expand_more, size: 18),
+              label: const Text('Load More'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cheaterCard(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final reportedUsername = data['reportedUsername'] ?? 'Unknown';
     final reason = data['reason'] ?? '';
@@ -5096,8 +5385,6 @@ class CheaterScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-
-            // Reason
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(10),
@@ -5115,13 +5402,11 @@ class CheaterScreen extends StatelessWidget {
                       color: Colors.grey[700],
                     )),
                   const SizedBox(height: 4),
-                  Text(reason,
-                    style: const TextStyle(fontSize: 13)),
+                  Text(reason, style: const TextStyle(fontSize: 13)),
                 ],
               ),
             ),
             const SizedBox(height: 8),
-
             Row(
               children: [
                 Icon(Icons.person, size: 14, color: Colors.grey[600]),
@@ -5139,13 +5424,11 @@ class CheaterScreen extends StatelessWidget {
                 ),
               ],
             ),
-
             if (deleteAt != null) ...[
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Icon(Icons.timer,
-                    size: 14, color: Colors.red),
+                  const Icon(Icons.timer, size: 14, color: Colors.red),
                   const SizedBox(width: 4),
                   Text(
                     'Account deletes in ${_remaining(deleteAt)}',
@@ -5178,7 +5461,6 @@ class CheaterScreen extends StatelessWidget {
     return '${diff.inHours}h';
   }
 }
-
 
 
 // ===== FILE: lib\screens\comment_sheet.dart =====
@@ -5214,68 +5496,83 @@ class _CommentSheetState extends State<CommentSheet> {
 
     setState(() => _sending = true);
     try {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users').doc(user.uid).get();
-      final username = userDoc.data()?['username'] ?? 'Unknown';
+      // ===== OPTIMIZATION: Read user + post in PARALLEL (1 round-trip) =====
+      final results = await Future.wait([
+        FirebaseFirestore.instance
+            .collection('users').doc(user.uid).get(),
+        FirebaseFirestore.instance
+            .collection('posts').doc(widget.postId).get(),
+      ]);
+      final userDoc = results[0];
+      final postDoc = results[1];
 
-      await FirebaseFirestore.instance
+      final username = userDoc.data()?['username'] ?? 'Unknown';
+      final postData = postDoc.data();
+      final postOwner = postData?['userId'] as String?;
+      final postContent = postData?['content'] as String? ?? '';
+      final postUsername = postData?['username'] as String? ?? '';
+
+      // ===== Write comment + increment + mirror in ONE batch =====
+      final batch = FirebaseFirestore.instance.batch();
+
+      final commentRef = FirebaseFirestore.instance
           .collection('posts').doc(widget.postId)
-          .collection('comments').add({
+          .collection('comments').doc();
+
+      batch.set(commentRef, {
         'userId': user.uid,
         'username': username,
         'text': text,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      await FirebaseFirestore.instance
-          .collection('posts').doc(widget.postId)
-          .update({'commentsCount': FieldValue.increment(1)});
+      batch.update(
+        FirebaseFirestore.instance.collection('posts').doc(widget.postId),
+        {'commentsCount': FieldValue.increment(1)},
+      );
 
-      // Mirror to activity collection (no index needed)
-      try {
-        final postDoc = await FirebaseFirestore.instance
-            .collection('posts').doc(widget.postId).get();
-        final postData = postDoc.data();
-        await FirebaseFirestore.instance
+      batch.set(
+        FirebaseFirestore.instance
             .collection('users').doc(user.uid)
-            .collection('activityComments').doc(widget.postId)
-            .set({
+            .collection('activityComments').doc(widget.postId),
+        {
           'postId': widget.postId,
-          'postContent': postData?['content'] ?? '',
-          'postUsername': postData?['username'] ?? '',
-          'postUserId': postData?['userId'] ?? '',
+          'postContent': postContent,
+          'postUsername': postUsername,
+          'postUserId': postOwner ?? '',
           'myComment': text,
           'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+
+      // ===== Notify post owner (if not self) — same batch =====
+      if (postOwner != null && postOwner != user.uid) {
+        final notifRef = FirebaseFirestore.instance
+            .collection('users').doc(postOwner)
+            .collection('notifications').doc();
+        batch.set(notifRef, {
+          'type': 'comment',
+          'title': '$username commented',
+          'body': text.length > 80
+              ? '${text.substring(0, 80)}...'
+              : text,
+          'data': {'postId': widget.postId},
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
         });
-      } catch (e) {
-        debugPrint('[Activity] comment mirror error: $e');
+        batch.update(
+          FirebaseFirestore.instance.collection('users').doc(postOwner),
+          {'unreadNotificationCount': FieldValue.increment(1)},
+        );
       }
 
-      try {
-        final postDoc = await FirebaseFirestore.instance
-            .collection('posts').doc(widget.postId).get();
-        final postOwner = postDoc.data()?['userId'];
-        if (postOwner != null && postOwner != user.uid) {
-          await FirebaseFirestore.instance
-              .collection('users').doc(postOwner)
-              .collection('notifications').add({
-            'type': 'comment',
-            'title': '$username commented',
-            'body': text.length > 80
-                ? '${text.substring(0, 80)}...'
-                : text,
-            'data': {'postId': widget.postId},
-            'isRead': false,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-      } catch (e) {
-        debugPrint('[Notif] comment error: $e');
-      }
+      await batch.commit();
 
       _controller.clear();
       FocusScope.of(context).unfocus();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Comment] error: $e');
+    }
     if (mounted) setState(() => _sending = false);
   }
 
@@ -5433,6 +5730,8 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
+
 
 
 
@@ -6665,6 +6964,9 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
   int _unreadNotifications = 0;
   FeedFilter _filter = FeedFilter.newest;
 
+  // Cached current user's username — avoids repeated reads across the app.
+  static String? _cachedUsername;
+
   @override
   void initState() {
     super.initState();
@@ -6695,15 +6997,20 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
   }
 
   void _listenNotifications() {
+    // ===== OPTIMIZATION: read the badge count from user doc =====
+    // Instead of a stream over the notifications subcollection
+    // (which fires for every notification change), we just read
+    // `unreadNotificationCount` on the user doc.
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     FirebaseFirestore.instance
         .collection('users').doc(uid)
-        .collection('notifications')
-        .where('isRead', isEqualTo: false)
         .snapshots()
         .listen((snap) {
-      if (mounted) setState(() => _unreadNotifications = snap.docs.length);
+      if (!mounted) return;
+      final data = snap.data() as Map<String, dynamic>?;
+      final count = (data?['unreadNotificationCount'] ?? 0) as int;
+      setState(() => _unreadNotifications = count);
     });
   }
 
@@ -6876,10 +7183,17 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     setState(() => _posting = true);
     try {
       final user = FirebaseAuth.instance.currentUser!;
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users').doc(user.uid).get();
-      final username = userDoc.data()?['username'] ?? 'Unknown';
 
+      // ---- Use cached username; only read Firestore if not cached ----
+      String username = _cachedUsername ?? '';
+      if (username.isEmpty) {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users').doc(user.uid).get();
+        username = userDoc.data()?['username'] ?? 'Unknown';
+        _cachedUsername = username;
+      }
+
+      // ---- Create post ----
       final newDoc = await FirebaseFirestore.instance
           .collection('posts').add({
         'userId': user.uid,
@@ -6895,9 +7209,20 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
       _postController.clear();
       _focusNode.unfocus();
 
-      final doc = await newDoc.get();
+      // ---- Build PostModel locally (no extra read!) ----
+      final localPost = PostModel(
+        id: newDoc.id,
+        userId: user.uid,
+        username: username,
+        content: text,
+        likesCount: 0,
+        commentsCount: 0,
+        viewsCount: 0,
+        createdAt: Timestamp.now(),
+      );
+
       setState(() {
-        _posts.insert(0, PostModel.fromDoc(doc));
+        _posts.insert(0, localPost);
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -6905,6 +7230,9 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to publish post')));
+      if (mounted) {
+        _cachedUsername = null; // invalidate cache on failure
+      }
     }
     if (mounted) setState(() => _posting = false);
   }
@@ -7016,16 +7344,21 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
               ),
             ),
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _filterChip(FeedFilter.newest, 'New',
-                    Icons.access_time),
-                _filterChip(FeedFilter.mostInteracted,
-                    'Most Interacted', Icons.local_fire_department),
-                _filterChip(FeedFilter.random, 'Random',
-                    Icons.shuffle),
-              ],
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  _filterChip(FeedFilter.newest, 'New',
+                      Icons.access_time),
+                  const SizedBox(width: 8),
+                  _filterChip(FeedFilter.mostInteracted,
+                      'Most Interacted', Icons.local_fire_department),
+                  const SizedBox(width: 8),
+                  _filterChip(FeedFilter.random, 'Random',
+                      Icons.shuffle),
+                ],
+              ),
             ),
           ),
           Expanded(
@@ -7434,6 +7767,9 @@ class _ReportBanner extends StatelessWidget {
 
 
 
+
+
+
 // ===== FILE: lib\screens\main_shell.dart =====
 import 'package:flutter/material.dart';
 import 'main_feed_screen.dart';
@@ -7563,12 +7899,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             builder: (context, snap) {
               final unread = snap.data?.docs.length ?? 0;
               if (unread == 0) return const SizedBox.shrink();
-              return TextButton.icon(
-                onPressed: () => _markAllAsRead(unread),
+              return IconButton(
+                tooltip: 'Mark all read',
                 icon: const Icon(Icons.done_all,
-                  color: Colors.white, size: 18),
-                label: const Text('Mark all read',
-                  style: TextStyle(color: Colors.white, fontSize: 12)),
+                  color: Colors.white, size: 20),
+                onPressed: () => _markAllAsRead(unread),
               );
             },
           ),
@@ -7610,6 +7945,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       for (final doc in unread.docs) {
         batch.update(doc.reference, {'isRead': true});
       }
+      // Also reset the badge counter on the user doc
+      batch.update(
+        FirebaseFirestore.instance.collection('users').doc(_currentUserId),
+        {'unreadNotificationCount': 0},
+      );
       await batch.commit();
 
       if (mounted) {
@@ -7627,10 +7967,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _markAsRead(String notificationId) async {
     try {
-      await FirebaseFirestore.instance
-          .collection('users').doc(_currentUserId)
-          .collection('notifications').doc(notificationId)
-          .update({'isRead': true});
+      final batch = FirebaseFirestore.instance.batch();
+      batch.update(
+        FirebaseFirestore.instance
+            .collection('users').doc(_currentUserId)
+            .collection('notifications').doc(notificationId),
+        {'isRead': true},
+      );
+      // Decrement the user's badge counter by 1
+      batch.update(
+        FirebaseFirestore.instance.collection('users').doc(_currentUserId),
+        {'unreadNotificationCount': FieldValue.increment(-1)},
+      );
+      await batch.commit();
     } catch (e) {
       debugPrint('[Notif] mark one error: $e');
     }
@@ -7773,6 +8122,8 @@ class _NotificationVisual {
   final Color color;
   const _NotificationVisual(this.icon, this.color);
 }
+
+
 
 
 
@@ -7933,9 +8284,9 @@ class PartnershipSheet extends StatelessWidget {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: [
-                              _statChip('🤝', '$total', 'Total'),
-                              _statChip('✅', '$activeCount', 'Active'),
-                              _statChip('⚠️', '$reportedCount', 'Reported'),
+                              Flexible(child: _statChip('🤝', '$total', 'Total')),
+                              Flexible(child: _statChip('✅', '$activeCount', 'Active')),
+                              Flexible(child: _statChip('⚠️', '$reportedCount', 'Reported')),
                             ],
                           ),
                         ),
@@ -8120,6 +8471,7 @@ class PartnershipSheet extends StatelessWidget {
     );
   }
 }
+
 
 
 // ===== FILE: lib\screens\privacy_policy_screen.dart =====
@@ -8621,11 +8973,12 @@ class _ProfileScreenState extends State<ProfileScreen>
           const SizedBox(height: 12),
 
           // Stats + Admin + Logout in compact form
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               _statPill('🤝', '$partnershipCount'),
-              const SizedBox(width: 8),
               _postsPill(uid),
             ],
           ),
@@ -8752,7 +9105,8 @@ class _ProfileScreenState extends State<ProfileScreen>
           .limit(20),
       itemBuilder: (context, doc) {
         final post = PostModel.fromDoc(doc);
-        return PostCard(post: post, onDelete: () {});
+        // Don't count my own posts as new views when browsing my profile
+        return PostCard(post: post, onDelete: () {}, recordView: false);
       },
       emptyBuilder: (context) => _emptyState(
         icon: Icons.article_outlined,
@@ -8797,7 +9151,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           itemCount: docs.length,
           itemBuilder: (_, i) {
             final post = PostModel.fromDoc(docs[i]);
-            return PostCard(post: post, onDelete: () {});
+            return PostCard(post: post, onDelete: () {}, recordView: false);
           },
         );
       },
@@ -9168,6 +9522,8 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_TabBarDelegate oldDelegate) => false;
 }
+
+
 
 
 
@@ -9598,23 +9954,20 @@ class _SearchScreenState extends State<SearchScreen>
     });
   }
 
-  // ============ POSTS ============
-  // Strategy: Fetch posts by keyword + sort in Dart.
-  // "Most Viewed" and "Most Liked" fetch a large batch then sort client-side.
+  // ============ POSTS (NO INDEX VERSION) ============
+  // Fetch by keyword only (or nothing), filter + sort in Dart.
   Future<void> _searchPosts(bool reset) async {
     final q = _query.trim().toLowerCase();
 
     Query query;
 
     if (q.isNotEmpty) {
-      // Keyword search on contentLower prefix
       query = FirebaseFirestore.instance
           .collection('posts')
           .where('contentLower', isGreaterThanOrEqualTo: q)
           .where('contentLower', isLessThan: '$q\uf8ff')
           .limit(100);
     } else {
-      // No keyword → fetch recent posts by default
       query = FirebaseFirestore.instance
           .collection('posts')
           .orderBy('createdAt', descending: true)
@@ -9624,7 +9977,6 @@ class _SearchScreenState extends State<SearchScreen>
     final snap = await query.get();
     var posts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
 
-    // Apply filter in Dart
     final now = DateTime.now();
     switch (_filter) {
       case PostFilter.mostLiked:
@@ -9976,8 +10328,6 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 }
-
-
 
 
 // ===== FILE: lib\screens\settings_screen.dart =====
@@ -10371,6 +10721,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login_screen.dart';
+import '../services/current_user_cache.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -10475,12 +10826,17 @@ class _SignupScreenState extends State<SignupScreen> {
         'bio': '',
         'avatarUrl': '',
         'partnershipCount': 0,
+        'unreadNotificationCount': 0,   // ← badge counter
+        'totalUnreadMessages': 0,        // ← chat badge counter
         'createdAt': FieldValue.serverTimestamp(),
         'isOnline': true,
         'isBanned': false,
         'lastSeenAt': FieldValue.serverTimestamp(),
       });
       debugPrint('STEP 3 OK');
+
+      // Cache the username for this session
+      CurrentUserCache.set(_usernameController.text.trim());
 
       // STEP 4: Send verification email
       try {
@@ -10729,7 +11085,10 @@ class _SignupScreenState extends State<SignupScreen> {
 
 
 
+
+
 // ===== FILE: lib\screens\splash_screen.dart =====
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10743,75 +11102,114 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+  StreamSubscription<User?>? _authSub;
+  Timer? _fallbackTimer;
+  bool _navigated = false;
+
   @override
   void initState() {
     super.initState();
-    _checkAuth();
+
+    // ---- Safety net: if nothing happens in 8 seconds, go to Login ----
+    _fallbackTimer = Timer(const Duration(seconds: 8), () {
+      debugPrint('[Splash] FALLBACK triggered — going to Login');
+      _goToLogin();
+    });
+
+    // ---- Listen to auth state. Fires immediately with the restored user. ----
+    _authSub = FirebaseAuth.instance.authStateChanges().listen(
+      (user) async {
+        debugPrint('[Splash] auth state: ${user?.uid ?? "null"}');
+
+        if (user == null) {
+          // No session → Login
+          await Future.delayed(const Duration(milliseconds: 400));
+          _goToLogin();
+          return;
+        }
+
+        // User restored → check ban status
+        try {
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get()
+              .timeout(const Duration(seconds: 4));
+
+          if (!userDoc.exists) {
+            // User doc missing → logout
+            await FirebaseAuth.instance.signOut();
+            _goToLogin();
+            return;
+          }
+
+          final data = userDoc.data()!;
+          if (data['isBanned'] == true) {
+            await FirebaseAuth.instance.signOut();
+            _goToLogin(message: 'Your account has been banned.');
+            return;
+          }
+
+          // Mark online (best-effort, don't block navigation)
+          FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .update({
+            'isOnline': true,
+            'lastSeenAt': FieldValue.serverTimestamp(),
+          }).catchError((e) {
+            debugPrint('[Splash] online update error: $e');
+          });
+
+          _goToFeed();
+        } catch (e) {
+          debugPrint('[Splash] check error: $e');
+          // On error → still go to feed (offline mode)
+          _goToFeed();
+        }
+      },
+      onError: (e) {
+        debugPrint('[Splash] auth error: $e');
+        _goToLogin();
+      },
+    );
   }
 
-  Future<void> _checkAuth() async {
-    // Small delay so splash shows nicely
-    await Future.delayed(const Duration(milliseconds: 1200));
-
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) {
-      _goToLogin();
-      return;
-    }
-
-    try {
-      // Check if user is banned
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (!userDoc.exists) {
-        // User doc missing (deleted) → force logout
-        await FirebaseAuth.instance.signOut();
-        _goToLogin();
-        return;
-      }
-
-      final data = userDoc.data()!;
-      if (data['isBanned'] == true) {
-        await FirebaseAuth.instance.signOut();
-        _goToLogin(message: 'Your account has been banned.');
-        return;
-      }
-
-      // Mark user online
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .update({
-        'isOnline': true,
-        'lastSeenAt': FieldValue.serverTimestamp(),
-      });
-
-      _goToFeed();
-    } catch (_) {
-      // Any error → just go to feed (offline mode still works)
-      _goToFeed();
-    }
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    _fallbackTimer?.cancel();
+    super.dispose();
   }
 
   void _goToLogin({String? message}) {
-    if (!mounted) return;
+    if (!mounted || _navigated) return;
+    _navigated = true;
+    _fallbackTimer?.cancel();
+
     if (message != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      });
     }
-    Navigator.pushReplacement(context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()));
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
   }
 
   void _goToFeed() {
-    if (!mounted) return;
-    Navigator.pushReplacement(context,
-      MaterialPageRoute(builder: (_) => const MainShell()));
+    if (!mounted || _navigated) return;
+    _navigated = true;
+    _fallbackTimer?.cancel();
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const MainShell()),
+    );
   }
 
   @override
@@ -10825,8 +11223,11 @@ class _SplashScreenState extends State<SplashScreen> {
             const Icon(Icons.handshake, size: 100, color: Colors.white),
             const SizedBox(height: 20),
             const Text('PartnerUp',
-              style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold,
-                color: Colors.white)),
+              style: TextStyle(
+                fontSize: 36,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              )),
             const SizedBox(height: 10),
             const Text('Find your perfect partner',
               style: TextStyle(fontSize: 16, color: Colors.white70)),
@@ -10840,7 +11241,6 @@ class _SplashScreenState extends State<SplashScreen> {
 }
 
 
-
 // ===== FILE: lib\services\account_deletion_service.dart =====
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10849,6 +11249,22 @@ import 'package:flutter/foundation.dart';
 class AccountDeletionService {
   static final _db = FirebaseFirestore.instance;
 
+  /// Small helper: wrap any future with a timeout so nothing hangs.
+  static Future<T?> _withTimeout<T>(
+    Future<T> future,
+    String label, {
+    int seconds = 15,
+  }) async {
+    try {
+      return await future.timeout(Duration(seconds: seconds));
+    } catch (e) {
+      debugPrint('[Delete] $label TIMEOUT/ERROR: $e');
+      return null;
+    }
+  }
+
+  /// Deletes the current user's account and all associated data.
+  /// Uses pagination to handle any number of docs.
   static Future<String> deleteMyAccount() async {
     final me = FirebaseAuth.instance.currentUser;
     if (me == null) throw Exception('Not logged in');
@@ -10856,62 +11272,206 @@ class AccountDeletionService {
     final uid = me.uid;
     debugPrint('[Delete] START $uid');
 
-    // ---- Delete top-level user data (fast, with timeouts) ----
-    await _safeDelete('posts',
-      _db.collection('posts').where('userId', isEqualTo: uid));
-    await _safeDelete('chatsA',
-      _db.collection('chats').where('userA', isEqualTo: uid));
-    await _safeDelete('chatsB',
-      _db.collection('chats').where('userB', isEqualTo: uid));
-    await _safeDelete('partnershipsA',
-      _db.collection('partnerships').where('userA', isEqualTo: uid));
-    await _safeDelete('partnershipsB',
-      _db.collection('partnerships').where('userB', isEqualTo: uid));
-    await _safeDelete('requestsA',
-      _db.collection('partnershipRequests').where('userA', isEqualTo: uid));
-    await _safeDelete('requestsB',
-      _db.collection('partnershipRequests').where('userB', isEqualTo: uid));
+    // ---- 1) Delete my posts (with subcollections, paginated) ----
+    await _deleteAllWithSubcollections(
+      label: 'posts',
+      query: () => _db.collection('posts')
+          .where('userId', isEqualTo: uid).limit(50),
+      subcollections: ['likes', 'comments', 'views'],
+    );
 
-    // Delete user doc
+    // ---- 2) Delete my likes from others' posts (collectionGroup, paginated) ----
+    await _deleteAllSimple(
+      label: 'my likes',
+      query: () => _db.collectionGroup('likes')
+          .where('userId', isEqualTo: uid).limit(50),
+    );
+
+    // ---- 3) Delete my comments from others' posts ----
+    await _deleteAllSimple(
+      label: 'my comments',
+      query: () => _db.collectionGroup('comments')
+          .where('userId', isEqualTo: uid).limit(50),
+    );
+
+    // ---- 4) Delete my chats (with messages, paginated) ----
+    await _deleteAllWithSubcollections(
+      label: 'chats as userA',
+      query: () => _db.collection('chats')
+          .where('userA', isEqualTo: uid).limit(50),
+      subcollections: ['messages'],
+    );
+    await _deleteAllWithSubcollections(
+      label: 'chats as userB',
+      query: () => _db.collection('chats')
+          .where('userB', isEqualTo: uid).limit(50),
+      subcollections: ['messages'],
+    );
+
+    // ---- 5) Delete my partnerships ----
+    await _deleteAllSimple(
+      label: 'partnerships as userA',
+      query: () => _db.collection('partnerships')
+          .where('userA', isEqualTo: uid).limit(50),
+    );
+    await _deleteAllSimple(
+      label: 'partnerships as userB',
+      query: () => _db.collection('partnerships')
+          .where('userB', isEqualTo: uid).limit(50),
+    );
+
+    // ---- 6) Delete partnership requests ----
+    await _deleteAllSimple(
+      label: 'requests as userA',
+      query: () => _db.collection('partnershipRequests')
+          .where('userA', isEqualTo: uid).limit(50),
+    );
+    await _deleteAllSimple(
+      label: 'requests as userB',
+      query: () => _db.collection('partnershipRequests')
+          .where('userB', isEqualTo: uid).limit(50),
+    );
+
+    // ---- 7) Delete my user subcollections (paginated) ----
+    final userRef = _db.collection('users').doc(uid);
+    for (final sub in [
+      'notifications',
+      'activityLikes',
+      'activityComments',
+      'blockedUsers',
+      'blockedBy',
+    ]) {
+      await _deleteSubcollectionPaginated(userRef, sub);
+    }
+
+    // ---- 8) Delete user doc ----
     try {
-      await _db.collection('users').doc(uid).delete()
-          .timeout(const Duration(seconds: 5));
+      await _withTimeout(
+        _db.collection('users').doc(uid).delete(),
+        'user doc delete',
+      );
       debugPrint('[Delete] user doc deleted');
     } catch (e) {
       debugPrint('[Delete] user doc error: $e');
     }
 
-    // Delete Firebase Auth account
+    // ---- 9) Delete Firebase Auth account ----
+    debugPrint('[Delete] deleting auth account');
     try {
-      await me.delete().timeout(const Duration(seconds: 8));
-      debugPrint('[Delete] auth deleted');
-    } catch (e) {
-      debugPrint('[Delete] auth error: $e');
+      await me.delete().timeout(const Duration(seconds: 10));
+      debugPrint('[Delete] auth account deleted');
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[Delete] Auth error: ${e.code}');
+      if (e.code == 'requires-recent-login') {
+        try { await FirebaseAuth.instance.signOut(); } catch (_) {}
+        throw Exception(
+          'For security, please logout and login again, then try deleting.');
+      }
       try { await FirebaseAuth.instance.signOut(); } catch (_) {}
-      // Don't throw — we already deleted the data. Just ensure signout.
+      throw Exception('Auth deletion failed: ${e.message}');
+    } catch (e) {
+      debugPrint('[Delete] Auth error: $e');
+      try { await FirebaseAuth.instance.signOut(); } catch (_) {}
+      throw Exception('Could not delete account. Please try again.');
     }
 
-    // Force signout anyway
+    // ---- 10) Force sign out ----
     try { await FirebaseAuth.instance.signOut(); } catch (_) {}
 
     debugPrint('[Delete] DONE');
     return 'Account deleted';
   }
 
-  static Future<void> _safeDelete(String label, Query query) async {
-    try {
-      debugPrint('[Delete] $label...');
-      final snap = await query.limit(50).get()
-          .timeout(const Duration(seconds: 6));
-      for (final doc in snap.docs) {
-        try {
-          await doc.reference.delete()
-              .timeout(const Duration(seconds: 4));
-        } catch (_) {}
+  // ============================================================
+  // Paginated deleter — keeps fetching until no docs remain
+  // ============================================================
+  static Future<void> _deleteAllSimple({
+    required String label,
+    required Query Function() query,
+  }) async {
+    int total = 0;
+    while (true) {
+      try {
+        final snap = await _withTimeout(query().get(), '$label fetch');
+        if (snap == null || snap.docs.isEmpty) break;
+
+        for (final doc in snap.docs) {
+          await _withTimeout(doc.reference.delete(), '$label delete');
+        }
+        total += snap.docs.length;
+        debugPrint('[Delete] $label: deleted ${snap.docs.length} (total $total)');
+
+        // If fewer than 50 returned, we're done
+        if (snap.docs.length < 50) break;
+      } catch (e) {
+        debugPrint('[Delete] $label loop error: $e');
+        break;
       }
-      debugPrint('[Delete] $label done (${snap.docs.length})');
-    } catch (e) {
-      debugPrint('[Delete] $label ERROR: $e');
+    }
+    debugPrint('[Delete] $label FINAL total: $total');
+  }
+
+  static Future<void> _deleteAllWithSubcollections({
+    required String label,
+    required Query Function() query,
+    required List<String> subcollections,
+  }) async {
+    int total = 0;
+    while (true) {
+      try {
+        final snap = await _withTimeout(query().get(), '$label fetch');
+        if (snap == null || snap.docs.isEmpty) break;
+
+        for (final doc in snap.docs) {
+          // Delete each subcollection first
+          for (final sub in subcollections) {
+            await _deleteSubcollectionPaginated(doc.reference, sub);
+          }
+          await _withTimeout(doc.reference.delete(), '$label delete');
+        }
+        total += snap.docs.length;
+        debugPrint('[Delete] $label: deleted ${snap.docs.length} (total $total)');
+
+        if (snap.docs.length < 50) break;
+      } catch (e) {
+        debugPrint('[Delete] $label loop error: $e');
+        break;
+      }
+    }
+    debugPrint('[Delete] $label FINAL total: $total');
+  }
+
+  /// Deletes every document inside a subcollection, paginated.
+  static Future<void> _deleteSubcollectionPaginated(
+    DocumentReference parent,
+    String subcollection,
+  ) async {
+    int total = 0;
+    while (true) {
+      try {
+        final snap = await _withTimeout(
+          parent.collection(subcollection).limit(50).get(),
+          '$subcollection fetch',
+          seconds: 10,
+        );
+        if (snap == null || snap.docs.isEmpty) break;
+
+        for (final doc in snap.docs) {
+          await _withTimeout(
+            doc.reference.delete(),
+            '$subcollection delete',
+            seconds: 5,
+          );
+        }
+        total += snap.docs.length;
+        if (snap.docs.length < 50) break;
+      } catch (e) {
+        debugPrint('[Delete] $subcollection error: $e');
+        break;
+      }
+    }
+    if (total > 0) {
+      debugPrint('[Delete]   $subcollection: removed $total docs');
     }
   }
 }
@@ -10986,6 +11546,56 @@ class BlockService {
     return _db.collection('users').doc(me.uid)
         .collection('blockedUsers').doc(otherUserId)
         .snapshots().map((d) => d.exists);
+  }
+}
+
+
+// ===== FILE: lib\services\current_user_cache.dart =====
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
+/// Global cache for the current user's profile data.
+/// Load once, reuse everywhere. Invalidated on logout.
+class CurrentUserCache {
+  static String? _username;
+  static String? _uid;
+
+  /// Get the current user's username. Reads Firestore only once per session.
+  static Future<String> getUsername() async {
+    final me = FirebaseAuth.instance.currentUser;
+    if (me == null) return 'Unknown';
+
+    if (_uid == me.uid && _username != null) {
+      return _username!;
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users').doc(me.uid).get();
+      _username = doc.data()?['username'] ?? 'Unknown';
+      _uid = me.uid;
+      debugPrint('[Cache] loaded username: $_username');
+      return _username!;
+    } catch (e) {
+      debugPrint('[Cache] error: $e');
+      return 'Unknown';
+    }
+  }
+
+  /// Manually set (e.g. after signup or username change)
+  static void set(String username) {
+    _username = username;
+    _uid = FirebaseAuth.instance.currentUser?.uid;
+  }
+
+  /// Get synchronously if already loaded.
+  static String? get maybeUsername => _username;
+
+  /// Clear on logout.
+  static void clear() {
+    _username = null;
+    _uid = null;
   }
 }
 
@@ -11086,6 +11696,60 @@ class PartnershipService {
       debugPrint('[Service] userB count error: $e');
     }
 
+    // ============ NOTIFICATIONS (with counter increments) ============
+    try {
+      final batch = _db.batch();
+      batch.set(
+        _db.collection('users').doc(userA).collection('notifications').doc(),
+        {
+          'type': 'partnership_accepted',
+          'title': 'Partnership Confirmed!',
+          'body': 'You are now partnered with $usernameB',
+          'data': {
+            'partnershipId': pRef.id,
+            'otherUserId': userB,
+            'otherUsername': usernameB,
+          },
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+      batch.update(
+        _db.collection('users').doc(userA),
+        {'unreadNotificationCount': FieldValue.increment(1)},
+      );
+      await batch.commit();
+    } catch (e) {
+      debugPrint('[Service] userA notif error: $e');
+    }
+
+    try {
+      final batch = _db.batch();
+      batch.set(
+        _db.collection('users').doc(userB).collection('notifications').doc(),
+        {
+          'type': 'partnership_accepted',
+          'title': 'Partnership Confirmed!',
+          'body': 'You are now partnered with $usernameA',
+          'data': {
+            'partnershipId': pRef.id,
+            'otherUserId': userA,
+            'otherUsername': usernameA,
+          },
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+      batch.update(
+        _db.collection('users').doc(userB),
+        {'unreadNotificationCount': FieldValue.increment(1)},
+      );
+      await batch.commit();
+    } catch (e) {
+      debugPrint('[Service] userB notif error: $e');
+    }
+
+    // ============ System message in chat ============
     final ids = [userA, userB]..sort();
     final chatId = ids.join('_');
     try {
@@ -11144,7 +11808,6 @@ class PartnershipService {
     }
   }
 }
-
 
 
 // ===== FILE: lib\services\report_service.dart =====
@@ -12505,6 +13168,7 @@ class _PartnershipPopupState extends State<PartnershipPopup> {
 
 
 // ===== FILE: lib\widgets\post_card.dart =====
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -12512,6 +13176,7 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/post_model.dart';
 import '../screens/comment_sheet.dart';
 import '../screens/chat_screen.dart';
@@ -12519,7 +13184,15 @@ import '../screens/chat_screen.dart';
 class PostCard extends StatefulWidget {
   final PostModel post;
   final VoidCallback? onDelete;
-  const PostCard({super.key, required this.post, this.onDelete});
+  /// Set false to skip view tracking (e.g. on Activity / Profile pages).
+  final bool recordView;
+
+  const PostCard({
+    super.key,
+    required this.post,
+    this.onDelete,
+    this.recordView = true,
+  });
 
   @override
   State<PostCard> createState() => _PostCardState();
@@ -12534,11 +13207,16 @@ class _PostCardState extends State<PostCard> {
   @override
   void initState() {
     super.initState();
-    _listenLikeStatus();
-    _recordView();
+    _checkLikeStatus();  // one-time .get() instead of permanent listener
+    if (widget.recordView) {
+      _recordView();
+    } else {
+      _viewRecorded = true; // skip
+    }
   }
 
   /// Records a unique view — only counts once per user per post.
+  /// Uses local SharedPreferences cache to avoid Firestore reads.
   Future<void> _recordView() async {
     if (currentUserId == null || _viewRecorded) return;
 
@@ -12551,18 +13229,28 @@ class _PostCardState extends State<PostCard> {
     _viewRecorded = true;
 
     try {
+      // ===== LAYER 1: Local cache (no cost) =====
+      final prefs = await SharedPreferences.getInstance();
+      final cacheKey = 'viewed_${widget.post.id}_$currentUserId';
+      if (prefs.getBool(cacheKey) == true) {
+        debugPrint('[Views] local cache hit for ${widget.post.id}');
+        return;
+      }
+
       final postRef = FirebaseFirestore.instance
           .collection('posts').doc(widget.post.id);
       final viewRef = postRef.collection('views').doc(currentUserId);
 
-      // Check if already viewed
+      // ===== LAYER 2: Firestore check (only if not cached locally) =====
       final existing = await viewRef.get();
       if (existing.exists) {
-        debugPrint('[Views] already counted for ${widget.post.id}');
+        // Save to local cache so we never check again
+        await prefs.setBool(cacheKey, true);
+        debugPrint('[Views] firestore says already counted');
         return;
       }
 
-      // Add view record + increment counter atomically
+      // ===== LAYER 3: Record the view =====
       await viewRef.set({
         'userId': currentUserId,
         'timestamp': FieldValue.serverTimestamp(),
@@ -12570,30 +13258,43 @@ class _PostCardState extends State<PostCard> {
       await postRef.update({
         'viewsCount': FieldValue.increment(1),
       });
+      await prefs.setBool(cacheKey, true);
       debugPrint('[Views] recorded for ${widget.post.id}');
     } catch (e) {
       debugPrint('[Views] error: $e');
     }
   }
 
-  void _listenLikeStatus() {
+  /// ONE-TIME check: did I like this post?
+  /// Replaces the permanent .snapshots() listener that used to run for every card.
+  Future<void> _checkLikeStatus() async {
     if (currentUserId == null) return;
-    FirebaseFirestore.instance
-        .collection('posts').doc(widget.post.id)
-        .collection('likes').doc(currentUserId)
-        .snapshots().listen((doc) {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('posts').doc(widget.post.id)
+          .collection('likes').doc(currentUserId)
+          .get();
       if (mounted) setState(() => _isLiked = doc.exists);
-    });
+    } catch (e) {
+      debugPrint('[Like] check error: $e');
+    }
   }
 
   Future<void> _toggleLike() async {
     if (currentUserId == null || _likeLoading) return;
-    setState(() => _likeLoading = true);
+
+    // ===== OPTIMISTIC UI: flip state instantly =====
+    final wasLiked = _isLiked;
+    setState(() {
+      _isLiked = !_isLiked;
+      _likeLoading = true;
+    });
+
     final postRef = FirebaseFirestore.instance
         .collection('posts').doc(widget.post.id);
     final likeRef = postRef.collection('likes').doc(currentUserId);
     try {
-      if (_isLiked) {
+      if (wasLiked) {
         await likeRef.delete();
         await postRef.update({'likesCount': FieldValue.increment(-1)});
 
@@ -12631,9 +13332,10 @@ class _PostCardState extends State<PostCard> {
 
         if (widget.post.userId != currentUserId) {
           try {
-            final meDoc = await FirebaseFirestore.instance
-                .collection('users').doc(currentUserId).get();
-            final myUsername = meDoc.data()?['username'] ?? 'Someone';
+            // Use cached username if available; else one read
+            final myUsername = widget.post.username == 'me'
+                ? 'Someone'
+                : await _getMyUsernameCached();
             await FirebaseFirestore.instance
                 .collection('users').doc(widget.post.userId)
                 .collection('notifications').add({
@@ -12651,7 +13353,11 @@ class _PostCardState extends State<PostCard> {
           }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      // Revert optimistic UI on error
+      debugPrint('[Like] error: $e');
+      if (mounted) setState(() => _isLiked = wasLiked);
+    }
     if (mounted) setState(() => _likeLoading = false);
   }
 
@@ -12721,6 +13427,21 @@ class _PostCardState extends State<PostCard> {
         postContent: widget.post.content,
       ),
     ));
+  }
+
+  // ===== Cached current user's username (avoids repeat reads) =====
+  static String? _cachedUsername;
+  static String? _cachedUsernameFor;
+
+  Future<String> _getMyUsernameCached() async {
+    if (_cachedUsername != null && _cachedUsernameFor == currentUserId) {
+      return _cachedUsername!;
+    }
+    final doc = await FirebaseFirestore.instance
+        .collection('users').doc(currentUserId).get();
+    _cachedUsername = doc.data()?['username'] ?? 'Someone';
+    _cachedUsernameFor = currentUserId;
+    return _cachedUsername!;
   }
 
   void _showMenu() {
@@ -12854,47 +13575,117 @@ class _PostCardState extends State<PostCard> {
                 const SizedBox(height: 12),
                 const Divider(height: 1),
                 const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    Expanded(child: _actionBtn(
-                      icon: _isLiked
-                          ? Icons.favorite : Icons.favorite_border,
-                      color: _isLiked ? Colors.red : Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
-                      label: '${post.likesCount}',
-                      onTap: _toggleLike,
-                    )),
-                    Expanded(child: _actionBtn(
-                      icon: Icons.chat_bubble_outline,
-                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
-                      label: '${post.commentsCount}',
-                      onTap: _openComments,
-                    )),
-                    Expanded(child: _actionBtn(
-                      icon: Icons.visibility_outlined,
-                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
-                      label: '${post.viewsCount}',
-                      onTap: () {},
-                    )),
-                    Expanded(child: _actionBtn(
-                      icon: Icons.share_outlined,
-                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
-                      label: 'Share',
-                      onTap: _share,
-                    )),
-                    Expanded(child: _actionBtn(
-                      icon: Icons.handshake_outlined,
-                      color: Colors.blue[700]!,
-                      label: 'Chat',
-                      onTap: _openChat,
-                    )),
-                  ],
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final isNarrow = constraints.maxWidth < 340;
+                    final w = isNarrow
+                        ? constraints.maxWidth / 3 - 4
+                        : constraints.maxWidth / 5 - 4;
+                    final wHalf = constraints.maxWidth / 2 - 4;
+                    return Wrap(
+                      alignment: WrapAlignment.spaceEvenly,
+                      runAlignment: WrapAlignment.center,
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        _flexAction(
+                          width: w,
+                          icon: _isLiked
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          color: _isLiked
+                              ? Colors.red
+                              : Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.color ??
+                                  Colors.grey,
+                          label: '${post.likesCount}',
+                          onTap: _toggleLike,
+                        ),
+                        _flexAction(
+                          width: w,
+                          icon: Icons.chat_bubble_outline,
+                          color: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.color ??
+                              Colors.grey,
+                          label: '${post.commentsCount}',
+                          onTap: _openComments,
+                        ),
+                        _flexAction(
+                          width: w,
+                          icon: Icons.visibility_outlined,
+                          color: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.color ??
+                              Colors.grey,
+                          label: '${post.viewsCount}',
+                          onTap: () {},
+                        ),
+                        _flexAction(
+                          width: isNarrow ? wHalf : w,
+                          icon: Icons.share_outlined,
+                          color: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.color ??
+                              Colors.grey,
+                          label: 'Share',
+                          onTap: _share,
+                        ),
+                        _flexAction(
+                          width: isNarrow ? wHalf : w,
+                          icon: Icons.handshake_outlined,
+                          color: Colors.blue[700]!,
+                          label: 'Chat',
+                          onTap: _openChat,
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _flexAction({
+    required double width,
+    required IconData icon,
+    required Color color,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: width,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: color, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -12928,6 +13719,12 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
+
+
+
+
+
+
 
 
 
@@ -13067,8 +13864,17 @@ class PartnerUpApp extends StatelessWidget {
           theme: _lightTheme(),
           darkTheme: _darkTheme(),
           builder: (context, child) {
-            return PartnershipListener(
-              child: child ?? const SizedBox.shrink(),
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(
+                textScaler: mq.textScaler.clamp(
+                  minScaleFactor: 0.85,
+                  maxScaleFactor: 1.2,
+                ),
+              ),
+              child: PartnershipListener(
+                child: child ?? const SizedBox.shrink(),
+              ),
             );
           },
           home: const SplashScreen(),
@@ -13371,4 +14177,5 @@ class PartnerUpApp extends StatelessWidget {
     );
   }
 }
+
 

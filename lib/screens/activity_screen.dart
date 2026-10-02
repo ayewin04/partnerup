@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
+import '../widgets/paginated_list_view.dart';
 import 'chat_screen.dart';
 
 enum ActivityType { likes, comments, partnerships }
@@ -58,104 +59,157 @@ class _ActivityScreenState extends State<ActivityScreen> {
     }
   }
 
-  // ============ MIRRORED LIKES / COMMENTS ============
-  // Reads from users/{uid}/activityLikes or activityComments
-  // Uses single where + orderBy on same collection = no composite index needed.
+  // ============ MIRRORED LIKES / COMMENTS (paginated) ============
   Widget _mirroredList(String collection) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users').doc(uid)
-          .collection(collection)
-          .orderBy('createdAt', descending: true)
-          .limit(200)
-          .snapshots(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return _errorState('${snap.error}');
-        }
-        if (!snap.hasData || snap.data!.docs.isEmpty) {
-          return _emptyState(
-            icon: widget.type == ActivityType.likes
-                ? Icons.favorite_border
-                : Icons.chat_bubble_outline,
-            text: widget.type == ActivityType.likes
-                ? 'You haven\'t liked any posts yet'
-                : 'You haven\'t commented on any posts yet',
+    final base = FirebaseFirestore.instance
+        .collection('users').doc(uid)
+        .collection(collection)
+        .orderBy('createdAt', descending: true);
+
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => base.limit(20),
+      nextPageLoader: (lastDoc) =>
+          base.startAfterDocument(lastDoc).limit(20),
+      itemBuilder: (context, doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        final postId = data['postId'] ?? '';
+        // ← Use mirror data directly if available
+        final content = data['postContent'] as String? ?? '';
+        final username = data['postUsername'] as String? ?? '';
+        final postUserId = data['postUserId'] as String? ?? '';
+
+        // If mirror has all the data we need, don't fetch the post
+        if (content.isNotEmpty && username.isNotEmpty) {
+          return _postFromMirror(
+            postId: postId,
+            content: content,
+            username: username,
+            postUserId: postUserId,
+            myComment: data['myComment'] as String?,
           );
         }
 
-        final docs = snap.data!.docs;
-
-        return ListView.builder(
-          padding: const EdgeInsets.only(top: 6, bottom: 20),
-          itemCount: docs.length,
-          itemBuilder: (_, i) {
-            final data = docs[i].data() as Map<String, dynamic>;
-            final postId = data['postId'] ?? '';
-            return _postLoader(postId);
-          },
-        );
+        // Fallback: load the post
+        return _postLoader(postId);
       },
+      emptyBuilder: (context) => _emptyState(
+        icon: widget.type == ActivityType.likes
+            ? Icons.favorite_border
+            : Icons.chat_bubble_outline,
+        text: widget.type == ActivityType.likes
+            ? 'You haven\'t liked any posts yet'
+            : 'You haven\'t commented on any posts yet',
+      ),
     );
   }
 
-  // ============ PARTNERSHIPS ============
+  // ============ POST FROM MIRROR (no extra reads!) ============
+  Widget _postFromMirror({
+    required String postId,
+    required String content,
+    required String username,
+    required String postUserId,
+    String? myComment,
+  }) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          // Optionally navigate to post detail
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.blue[100],
+                    child: Text(
+                      username.isNotEmpty ? username[0].toUpperCase() : '?',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('@$username',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(content,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14, height: 1.4)),
+              if (myComment != null && myComment.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.chat_bubble_outline,
+                        size: 14, color: Colors.blue),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text('You commented: "$myComment"',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          )),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============ PARTNERSHIPS (paginated) ============
   Widget _partnershipsList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('partnerships')
-          .where('userA', whereIn: [uid])
-          .limit(200)
-          .snapshots(),
-      builder: (context, snapA) {
-        return StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('partnerships')
-              .where('userB', whereIn: [uid])
-              .limit(200)
-              .snapshots(),
-          builder: (context, snapB) {
-            final all = <QueryDocumentSnapshot>[];
-            if (snapA.hasData) all.addAll(snapA.data!.docs);
-            if (snapB.hasData) all.addAll(snapB.data!.docs);
+    final base = FirebaseFirestore.instance
+        .collection('partnerships')
+        .where('userA', isEqualTo: uid)
+        .orderBy('createdAt', descending: true);
 
-            final seen = <String>{};
-            final unique = <QueryDocumentSnapshot>[];
-            for (final d in all) {
-              if (seen.add(d.id)) unique.add(d);
-            }
-
-            if (unique.isEmpty) {
-              return _emptyState(
-                icon: Icons.handshake_outlined,
-                text: 'No partnerships yet',
-              );
-            }
-
-            unique.sort((a, b) {
-              final ta = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              final tb = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              if (ta == null && tb == null) return 0;
-              if (ta == null) return 1;
-              if (tb == null) return -1;
-              return tb.compareTo(ta);
-            });
-
-            return ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: unique.length,
-              itemBuilder: (_, i) => _partnershipTile(unique[i]),
-            );
-          },
-        );
-      },
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => base.limit(20),
+      nextPageLoader: (lastDoc) =>
+          base.startAfterDocument(lastDoc).limit(20),
+      itemBuilder: (context, doc) => _partnershipTile(doc),
+      emptyBuilder: (context) => _emptyState(
+        icon: Icons.handshake_outlined,
+        text: 'No partnerships yet',
+      ),
     );
   }
 
-  Widget _partnershipTile(QueryDocumentSnapshot doc) {
+  Widget _partnershipTile(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final userA = data['userA'] as String? ?? '';
     final userB = data['userB'] as String? ?? '';
@@ -227,17 +281,18 @@ class _ActivityScreenState extends State<ActivityScreen> {
     );
   }
 
-  // ============ LOAD POST BY ID ============
+  // ============ FALLBACK: LOAD POST BY ID ============
   Widget _postLoader(String postId) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('posts').doc(postId).snapshots(),
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance
+          .collection('posts').doc(postId).get(),
       builder: (context, snap) {
         if (!snap.hasData || !snap.data!.exists) {
           return const SizedBox.shrink();
         }
         final post = PostModel.fromDoc(snap.data!);
-        return PostCard(post: post);
+        // Disable view tracking — this is a list of posts I already interacted with
+        return PostCard(post: post, recordView: false);
       },
     );
   }
@@ -265,15 +320,5 @@ class _ActivityScreenState extends State<ActivityScreen> {
       ),
     );
   }
-
-  Widget _errorState(String error) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text('Error: $error',
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.red)),
-      ),
-    );
-  }
 }
+

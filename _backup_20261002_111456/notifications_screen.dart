@@ -44,11 +44,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             builder: (context, snap) {
               final unread = snap.data?.docs.length ?? 0;
               if (unread == 0) return const SizedBox.shrink();
-              return IconButton(
-                tooltip: 'Mark all read',
-                icon: const Icon(Icons.done_all,
-                  color: Colors.white, size: 20),
+              return TextButton.icon(
                 onPressed: () => _markAllAsRead(unread),
+                icon: const Icon(Icons.done_all,
+                  color: Colors.white, size: 18),
+                label: const Text('Mark all read',
+                  style: TextStyle(color: Colors.white, fontSize: 12)),
               );
             },
           ),
@@ -267,6 +268,5 @@ class _NotificationVisual {
   final Color color;
   const _NotificationVisual(this.icon, this.color);
 }
-
 
 

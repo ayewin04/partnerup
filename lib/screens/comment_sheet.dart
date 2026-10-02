@@ -30,68 +30,83 @@ class _CommentSheetState extends State<CommentSheet> {
 
     setState(() => _sending = true);
     try {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users').doc(user.uid).get();
-      final username = userDoc.data()?['username'] ?? 'Unknown';
+      // ===== OPTIMIZATION: Read user + post in PARALLEL (1 round-trip) =====
+      final results = await Future.wait([
+        FirebaseFirestore.instance
+            .collection('users').doc(user.uid).get(),
+        FirebaseFirestore.instance
+            .collection('posts').doc(widget.postId).get(),
+      ]);
+      final userDoc = results[0];
+      final postDoc = results[1];
 
-      await FirebaseFirestore.instance
+      final username = userDoc.data()?['username'] ?? 'Unknown';
+      final postData = postDoc.data();
+      final postOwner = postData?['userId'] as String?;
+      final postContent = postData?['content'] as String? ?? '';
+      final postUsername = postData?['username'] as String? ?? '';
+
+      // ===== Write comment + increment + mirror in ONE batch =====
+      final batch = FirebaseFirestore.instance.batch();
+
+      final commentRef = FirebaseFirestore.instance
           .collection('posts').doc(widget.postId)
-          .collection('comments').add({
+          .collection('comments').doc();
+
+      batch.set(commentRef, {
         'userId': user.uid,
         'username': username,
         'text': text,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      await FirebaseFirestore.instance
-          .collection('posts').doc(widget.postId)
-          .update({'commentsCount': FieldValue.increment(1)});
+      batch.update(
+        FirebaseFirestore.instance.collection('posts').doc(widget.postId),
+        {'commentsCount': FieldValue.increment(1)},
+      );
 
-      // Mirror to activity collection (no index needed)
-      try {
-        final postDoc = await FirebaseFirestore.instance
-            .collection('posts').doc(widget.postId).get();
-        final postData = postDoc.data();
-        await FirebaseFirestore.instance
+      batch.set(
+        FirebaseFirestore.instance
             .collection('users').doc(user.uid)
-            .collection('activityComments').doc(widget.postId)
-            .set({
+            .collection('activityComments').doc(widget.postId),
+        {
           'postId': widget.postId,
-          'postContent': postData?['content'] ?? '',
-          'postUsername': postData?['username'] ?? '',
-          'postUserId': postData?['userId'] ?? '',
+          'postContent': postContent,
+          'postUsername': postUsername,
+          'postUserId': postOwner ?? '',
           'myComment': text,
           'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+
+      // ===== Notify post owner (if not self) — same batch =====
+      if (postOwner != null && postOwner != user.uid) {
+        final notifRef = FirebaseFirestore.instance
+            .collection('users').doc(postOwner)
+            .collection('notifications').doc();
+        batch.set(notifRef, {
+          'type': 'comment',
+          'title': '$username commented',
+          'body': text.length > 80
+              ? '${text.substring(0, 80)}...'
+              : text,
+          'data': {'postId': widget.postId},
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
         });
-      } catch (e) {
-        debugPrint('[Activity] comment mirror error: $e');
+        batch.update(
+          FirebaseFirestore.instance.collection('users').doc(postOwner),
+          {'unreadNotificationCount': FieldValue.increment(1)},
+        );
       }
 
-      try {
-        final postDoc = await FirebaseFirestore.instance
-            .collection('posts').doc(widget.postId).get();
-        final postOwner = postDoc.data()?['userId'];
-        if (postOwner != null && postOwner != user.uid) {
-          await FirebaseFirestore.instance
-              .collection('users').doc(postOwner)
-              .collection('notifications').add({
-            'type': 'comment',
-            'title': '$username commented',
-            'body': text.length > 80
-                ? '${text.substring(0, 80)}...'
-                : text,
-            'data': {'postId': widget.postId},
-            'isRead': false,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-      } catch (e) {
-        debugPrint('[Notif] comment error: $e');
-      }
+      await batch.commit();
 
       _controller.clear();
       FocusScope.of(context).unfocus();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Comment] error: $e');
+    }
     if (mounted) setState(() => _sending = false);
   }
 
@@ -249,6 +264,8 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
+
 
 
 

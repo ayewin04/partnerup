@@ -1,5 +1,4 @@
-﻿import 'dart:async';
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
@@ -34,13 +33,8 @@ class _ChatScreenState extends State<ChatScreen> {
   late String _chatId;
   late String _currentUserId;
   bool _isUserA = false;   // set once on init
-  late final Stream<QuerySnapshot> _messagesStream;
-  bool _firstLoad = true;
-  int _lastMessageCount = 0;
   bool _markReadInFlight = false;  // debounce
-  DateTime? _lastMarkedRead;
-  StreamSubscription<DocumentSnapshot>? _chatDocSub;
-  final ValueNotifier<Timestamp?> _otherLastRead = ValueNotifier(null);       // avoid repeat writes
+  DateTime? _lastMarkedRead;       // avoid repeat writes
 
   @override
   void initState() {
@@ -49,29 +43,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final ids = [_currentUserId, widget.otherUserId]..sort();
     _chatId = ids.join('_');
     _isUserA = ids.first == _currentUserId;
-
-    // ✅ Create the messages stream ONCE so it isn't recreated
-    // every time the outer chat-doc StreamBuilder rebuilds.
-    _messagesStream = FirebaseFirestore.instance
-        .collection('chats').doc(_chatId)
-        .collection('messages')
-        .orderBy('timestamp', descending: false)
-        .limitToLast(50)
-        .snapshots();
-
-    // ✅ Auto-mark read when new incoming messages arrive
-    _messagesStream.listen((snap) {
-      if (!mounted) return;
-      final docs = snap.docs;
-      if (docs.length <= _lastMessageCount) return;
-      _lastMessageCount = docs.length;
-      final last = docs.last.data() as Map<String, dynamic>;
-      final sender = last['senderId'];
-      if (sender != _currentUserId && sender != 'system') {
-        _markRead();
-      }
-    });
-
     _ensureChatExists().then((_) => _markRead());
   }
 
@@ -100,21 +71,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_markReadInFlight) return;
     final now = DateTime.now();
     if (_lastMarkedRead != null &&
-        now.difference(_lastMarkedRead!).inSeconds < 5) {
+        now.difference(_lastMarkedRead!).inSeconds < 2) {
       return; // skip — we just marked
     }
     _markReadInFlight = true;
     try {
       final chatRef = FirebaseFirestore.instance
           .collection('chats').doc(_chatId);
-
-      // ✅ Don't write if the counter is already 0 (prevents feedback loop)
-      final checkSnap = await chatRef.get();
-      final currentUnread = _isUserA
-          ? (checkSnap.data()?['unreadForUserA'] ?? 0)
-          : (checkSnap.data()?['unreadForUserB'] ?? 0);
-      if (currentUnread == 0) return;
-
       await chatRef.update({
         _isUserA ? 'lastReadByUserA' : 'lastReadByUserB':
             FieldValue.serverTimestamp(),
@@ -514,34 +477,21 @@ class _ChatScreenState extends State<ChatScreen> {
             otherUserId: widget.otherUserId,
             otherUsername: widget.otherUsername,
           ),
-          if (MediaQuery.of(context).size.width >= 380)
-            TextButton.icon(
-              onPressed: _requesting ? null : _proposePartnership,
-              icon: _requesting
-                ? SizedBox(
-                    height: 16, width: 16,
-                    child: CircularProgressIndicator(
-                      color: Theme.of(context).cardColor, strokeWidth: 2))
-                : Icon(Icons.handshake,
-                    color: Theme.of(context).cardColor, size: 18),
-              label: Text('Partnerup',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
-                  fontSize: 11,
-                )),
-            )
-          else
-            IconButton(
-              tooltip: 'Partnerup',
-              onPressed: _requesting ? null : _proposePartnership,
-              icon: _requesting
-                ? const SizedBox(
-                    height: 16, width: 16,
-                    child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2))
-                : const Icon(Icons.handshake,
-                    color: Colors.white, size: 20),
-            ),
+          TextButton.icon(
+            onPressed: _requesting ? null : _proposePartnership,
+            icon: _requesting
+              ? SizedBox(
+                  height: 16, width: 16,
+                  child: CircularProgressIndicator(
+                    color: Theme.of(context).cardColor, strokeWidth: 2))
+              : Icon(Icons.handshake,
+                  color: Theme.of(context).cardColor, size: 18),
+            label: Text('Partnerup',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontSize: 11,
+              )),
+          ),
         ],
       ),
       body: Column(
@@ -603,86 +553,103 @@ class _ChatScreenState extends State<ChatScreen> {
             },
           ),
 
-          // ---- Messages list (single StreamBuilder, no nesting) ----
+          // ---- Messages + read status derived from chat doc read markers ----
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _messagesStream,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting &&
-                    _firstLoad) {
-                  return const Center(
-                    child: CircularProgressIndicator());
-                }
-                if (!snap.hasData || snap.data!.docs.isEmpty) {
-                  return const Center(
-                    child: Text('Start the conversation!',
-                      style: TextStyle(color: Colors.grey)));
-                }
+            child: StreamBuilder<DocumentSnapshot>(
+              // Listen only to the CHAT doc (1 read per change)
+              stream: FirebaseFirestore.instance
+                  .collection('chats').doc(_chatId).snapshots(),
+              builder: (context, chatSnap) {
+                final chatData = chatSnap.data?.data()
+                    as Map<String, dynamic>?;
+                final otherLastRead = _isUserA
+                    ? (chatData?['lastReadByUserB'] as Timestamp?)
+                    : (chatData?['lastReadByUserA'] as Timestamp?);
 
-                final messages = snap.data!.docs;
-                _firstLoad = false;
-
-                final otherLastRead = _otherLastRead.value;
-
-                final items = <_ChatItem>[];
-                for (int i = 0; i < messages.length; i++) {
-                  final m = messages[i].data()
-                      as Map<String, dynamic>;
-                  final ts = m['timestamp'] as Timestamp?;
-                  final senderId = m['senderId'] ?? '';
-                  final isSystem = senderId == 'system';
-
-                  if (i == 0 || !_isSameDay(
-                      (messages[i - 1].data()
-                          as Map<String, dynamic>)['timestamp']
-                          as Timestamp?,
-                      ts)) {
-                    if (ts != null) {
-                      items.add(_ChatItem(
-                        isDateHeader: true,
-                        dateLabel: _dateHeader(ts),
-                      ));
+                return StreamBuilder<QuerySnapshot>(
+                  // Also listen to messages for content
+                  stream: FirebaseFirestore.instance
+                      .collection('chats').doc(_chatId)
+                      .collection('messages')
+                      .orderBy('timestamp', descending: false)
+                      .limitToLast(50)
+                      .snapshots(),
+                  builder: (context, snap) {
+                    if (snap.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator());
                     }
-                  }
+                    if (!snap.hasData || snap.data!.docs.isEmpty) {
+                      return const Center(
+                        child: Text('Start the conversation!',
+                          style: TextStyle(color: Colors.grey)));
+                    }
 
-                  if (isSystem) {
-                    final a = m['systemUserA'] ?? 'User';
-                    final b = m['systemUserB'] ?? 'User';
-                    final aUid = m['systemAUid'];
-                    final reason = m['systemReason'] ?? '';
-                    final base = aUid == _currentUserId
-                        ? 'You confirmed a partnership with $b'
-                        : 'You confirmed a partnership with $a';
-                    final text = reason.isNotEmpty
-                        ? '$base\n📋 $reason'
-                        : base;
-                    items.add(_ChatItem(
-                      isSystem: true,
-                      text: text,
-                      timestamp: ts,
-                    ));
-                  } else {
-                    final isMyMessage = senderId == _currentUserId;
-                    final isRead = isMyMessage &&
-                        otherLastRead != null &&
-                        ts != null &&
-                        !ts.toDate().isAfter(
-                            otherLastRead.toDate());
-                    items.add(_ChatItem(
-                      messageId: messages[i].id,
-                      senderId: senderId,
-                      text: m['text'] ?? '',
-                      timestamp: ts,
-                      isRead: isRead,
-                    ));
-                  }
-                }
+                    final messages = snap.data!.docs;
 
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: items.length,
-                  itemBuilder: (_, i) => _buildItem(items[i]),
+                    final items = <_ChatItem>[];
+                    for (int i = 0; i < messages.length; i++) {
+                      final m = messages[i].data()
+                          as Map<String, dynamic>;
+                      final ts = m['timestamp'] as Timestamp?;
+                      final senderId = m['senderId'] ?? '';
+                      final isSystem = senderId == 'system';
+
+                      if (i == 0 || !_isSameDay(
+                          (messages[i - 1].data()
+                              as Map<String, dynamic>)['timestamp']
+                              as Timestamp?,
+                          ts)) {
+                        if (ts != null) {
+                          items.add(_ChatItem(
+                            isDateHeader: true,
+                            dateLabel: _dateHeader(ts),
+                          ));
+                        }
+                      }
+
+                      if (isSystem) {
+                        final a = m['systemUserA'] ?? 'User';
+                        final b = m['systemUserB'] ?? 'User';
+                        final aUid = m['systemAUid'];
+                        final reason = m['systemReason'] ?? '';
+                        final base = aUid == _currentUserId
+                            ? 'You confirmed a partnership with $b'
+                            : 'You confirmed a partnership with $a';
+                        final text = reason.isNotEmpty
+                            ? '$base\n📋 $reason'
+                            : base;
+                        items.add(_ChatItem(
+                          isSystem: true,
+                          text: text,
+                          timestamp: ts,
+                        ));
+                      } else {
+                        final isMyMessage = senderId == _currentUserId;
+                        // ✓✓ if other user's read marker >= this ts
+                        final isRead = isMyMessage &&
+                            otherLastRead != null &&
+                            ts != null &&
+                            !ts.toDate().isAfter(
+                                otherLastRead.toDate());
+                        items.add(_ChatItem(
+                          messageId: messages[i].id,
+                          senderId: senderId,
+                          text: m['text'] ?? '',
+                          timestamp: ts,
+                          isRead: isRead,
+                        ));
+                      }
+                    }
+
+                    return ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(12),
+                      itemCount: items.length,
+                      itemBuilder: (_, i) => _buildItem(items[i]),
+                    );
+                  },
                 );
               },
             ),
@@ -826,8 +793,6 @@ class _ChatScreenState extends State<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(item.text,
-              softWrap: true,
-              overflow: TextOverflow.clip,
               style: TextStyle(
                 color: isMe
                     ? Colors.white
@@ -1062,10 +1027,5 @@ class _ReportMenuButton extends StatelessWidget {
     );
   }
 }
-
-
-
-
-
 
 

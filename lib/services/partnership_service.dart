@@ -93,6 +93,60 @@ class PartnershipService {
       debugPrint('[Service] userB count error: $e');
     }
 
+    // ============ NOTIFICATIONS (with counter increments) ============
+    try {
+      final batch = _db.batch();
+      batch.set(
+        _db.collection('users').doc(userA).collection('notifications').doc(),
+        {
+          'type': 'partnership_accepted',
+          'title': 'Partnership Confirmed!',
+          'body': 'You are now partnered with $usernameB',
+          'data': {
+            'partnershipId': pRef.id,
+            'otherUserId': userB,
+            'otherUsername': usernameB,
+          },
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+      batch.update(
+        _db.collection('users').doc(userA),
+        {'unreadNotificationCount': FieldValue.increment(1)},
+      );
+      await batch.commit();
+    } catch (e) {
+      debugPrint('[Service] userA notif error: $e');
+    }
+
+    try {
+      final batch = _db.batch();
+      batch.set(
+        _db.collection('users').doc(userB).collection('notifications').doc(),
+        {
+          'type': 'partnership_accepted',
+          'title': 'Partnership Confirmed!',
+          'body': 'You are now partnered with $usernameA',
+          'data': {
+            'partnershipId': pRef.id,
+            'otherUserId': userA,
+            'otherUsername': usernameA,
+          },
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+      );
+      batch.update(
+        _db.collection('users').doc(userB),
+        {'unreadNotificationCount': FieldValue.increment(1)},
+      );
+      await batch.commit();
+    } catch (e) {
+      debugPrint('[Service] userB notif error: $e');
+    }
+
+    // ============ System message in chat ============
     final ids = [userA, userB]..sort();
     final chatId = ids.join('_');
     try {
@@ -151,4 +205,3 @@ class PartnershipService {
     }
   }
 }
-

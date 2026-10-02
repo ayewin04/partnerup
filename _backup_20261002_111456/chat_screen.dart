@@ -514,34 +514,21 @@ class _ChatScreenState extends State<ChatScreen> {
             otherUserId: widget.otherUserId,
             otherUsername: widget.otherUsername,
           ),
-          if (MediaQuery.of(context).size.width >= 380)
-            TextButton.icon(
-              onPressed: _requesting ? null : _proposePartnership,
-              icon: _requesting
-                ? SizedBox(
-                    height: 16, width: 16,
-                    child: CircularProgressIndicator(
-                      color: Theme.of(context).cardColor, strokeWidth: 2))
-                : Icon(Icons.handshake,
-                    color: Theme.of(context).cardColor, size: 18),
-              label: Text('Partnerup',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
-                  fontSize: 11,
-                )),
-            )
-          else
-            IconButton(
-              tooltip: 'Partnerup',
-              onPressed: _requesting ? null : _proposePartnership,
-              icon: _requesting
-                ? const SizedBox(
-                    height: 16, width: 16,
-                    child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2))
-                : const Icon(Icons.handshake,
-                    color: Colors.white, size: 20),
-            ),
+          TextButton.icon(
+            onPressed: _requesting ? null : _proposePartnership,
+            icon: _requesting
+              ? SizedBox(
+                  height: 16, width: 16,
+                  child: CircularProgressIndicator(
+                    color: Theme.of(context).cardColor, strokeWidth: 2))
+              : Icon(Icons.handshake,
+                  color: Theme.of(context).cardColor, size: 18),
+            label: Text('Partnerup',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontSize: 11,
+              )),
+          ),
         ],
       ),
       body: Column(
@@ -826,8 +813,6 @@ class _ChatScreenState extends State<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(item.text,
-              softWrap: true,
-              overflow: TextOverflow.clip,
               style: TextStyle(
                 color: isMe
                     ? Colors.white
@@ -1062,8 +1047,6 @@ class _ReportMenuButton extends StatelessWidget {
     );
   }
 }
-
-
 
 
 

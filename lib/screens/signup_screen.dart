@@ -2,6 +2,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login_screen.dart';
+import '../services/current_user_cache.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -106,12 +107,17 @@ class _SignupScreenState extends State<SignupScreen> {
         'bio': '',
         'avatarUrl': '',
         'partnershipCount': 0,
+        'unreadNotificationCount': 0,   // ← badge counter
+        'totalUnreadMessages': 0,        // ← chat badge counter
         'createdAt': FieldValue.serverTimestamp(),
         'isOnline': true,
         'isBanned': false,
         'lastSeenAt': FieldValue.serverTimestamp(),
       });
       debugPrint('STEP 3 OK');
+
+      // Cache the username for this session
+      CurrentUserCache.set(_usernameController.text.trim());
 
       // STEP 4: Send verification email
       try {
@@ -357,4 +363,6 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 }
+
+
 

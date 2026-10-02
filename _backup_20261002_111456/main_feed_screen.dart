@@ -411,21 +411,16 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
               ),
             ),
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  _filterChip(FeedFilter.newest, 'New',
-                      Icons.access_time),
-                  const SizedBox(width: 8),
-                  _filterChip(FeedFilter.mostInteracted,
-                      'Most Interacted', Icons.local_fire_department),
-                  const SizedBox(width: 8),
-                  _filterChip(FeedFilter.random, 'Random',
-                      Icons.shuffle),
-                ],
-              ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _filterChip(FeedFilter.newest, 'New',
+                    Icons.access_time),
+                _filterChip(FeedFilter.mostInteracted,
+                    'Most Interacted', Icons.local_fire_department),
+                _filterChip(FeedFilter.random, 'Random',
+                    Icons.shuffle),
+              ],
             ),
           ),
           Expanded(
@@ -827,7 +822,6 @@ class _ReportBanner extends StatelessWidget {
     );
   }
 }
-
 
 
 

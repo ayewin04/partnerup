@@ -405,117 +405,47 @@ class _PostCardState extends State<PostCard> {
                 const SizedBox(height: 12),
                 const Divider(height: 1),
                 const SizedBox(height: 4),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final isNarrow = constraints.maxWidth < 340;
-                    final w = isNarrow
-                        ? constraints.maxWidth / 3 - 4
-                        : constraints.maxWidth / 5 - 4;
-                    final wHalf = constraints.maxWidth / 2 - 4;
-                    return Wrap(
-                      alignment: WrapAlignment.spaceEvenly,
-                      runAlignment: WrapAlignment.center,
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: [
-                        _flexAction(
-                          width: w,
-                          icon: _isLiked
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          color: _isLiked
-                              ? Colors.red
-                              : Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
-                                      ?.color ??
-                                  Colors.grey,
-                          label: '${post.likesCount}',
-                          onTap: _toggleLike,
-                        ),
-                        _flexAction(
-                          width: w,
-                          icon: Icons.chat_bubble_outline,
-                          color: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.color ??
-                              Colors.grey,
-                          label: '${post.commentsCount}',
-                          onTap: _openComments,
-                        ),
-                        _flexAction(
-                          width: w,
-                          icon: Icons.visibility_outlined,
-                          color: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.color ??
-                              Colors.grey,
-                          label: '${post.viewsCount}',
-                          onTap: () {},
-                        ),
-                        _flexAction(
-                          width: isNarrow ? wHalf : w,
-                          icon: Icons.share_outlined,
-                          color: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.color ??
-                              Colors.grey,
-                          label: 'Share',
-                          onTap: _share,
-                        ),
-                        _flexAction(
-                          width: isNarrow ? wHalf : w,
-                          icon: Icons.handshake_outlined,
-                          color: Colors.blue[700]!,
-                          label: 'Chat',
-                          onTap: _openChat,
-                        ),
-                      ],
-                    );
-                  },
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    Expanded(child: _actionBtn(
+                      icon: _isLiked
+                          ? Icons.favorite : Icons.favorite_border,
+                      color: _isLiked ? Colors.red : Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
+                      label: '${post.likesCount}',
+                      onTap: _toggleLike,
+                    )),
+                    Expanded(child: _actionBtn(
+                      icon: Icons.chat_bubble_outline,
+                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
+                      label: '${post.commentsCount}',
+                      onTap: _openComments,
+                    )),
+                    Expanded(child: _actionBtn(
+                      icon: Icons.visibility_outlined,
+                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
+                      label: '${post.viewsCount}',
+                      onTap: () {},
+                    )),
+                    Expanded(child: _actionBtn(
+                      icon: Icons.share_outlined,
+                      color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
+                      label: 'Share',
+                      onTap: _share,
+                    )),
+                    Expanded(child: _actionBtn(
+                      icon: Icons.handshake_outlined,
+                      color: Colors.blue[700]!,
+                      label: 'Chat',
+                      onTap: _openChat,
+                    )),
+                  ],
                 ),
               ],
             ),
           ),
         );
       },
-    );
-  }
-
-  Widget _flexAction({
-    required double width,
-    required IconData icon,
-    required Color color,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return SizedBox(
-      width: width,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 16, color: color),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: color, fontSize: 12),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -549,8 +479,6 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
-
-
 
 
 

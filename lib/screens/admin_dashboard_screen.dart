@@ -77,55 +77,8 @@ class _OverviewTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Stats grid
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth > 600;
-            final crossCount = isWide ? 4 : 2;
-            return GridView.count(
-              crossAxisCount: crossCount,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 1.3,
-              children: [
-                _statCard(
-                  icon: Icons.people,
-                  label: 'Total Users',
-                  color: Colors.blue,
-                  query: FirebaseFirestore.instance
-                      .collection('users').limit(100).snapshots(),
-                ),
-                _statCard(
-                  icon: Icons.article,
-                  label: 'Total Posts',
-                  color: Colors.green,
-                  query: FirebaseFirestore.instance
-                      .collection('posts').limit(100).snapshots(),
-                ),
-                _statCard(
-                  icon: Icons.report,
-                  label: 'Pending Reports',
-                  color: Colors.orange,
-                  query: FirebaseFirestore.instance
-                      .collection('reports')
-                      .where('status', isEqualTo: 'pending_proof')
-                      .limit(500).snapshots(),
-                ),
-                _statCard(
-                  icon: Icons.warning_amber,
-                  label: 'Cheaters',
-                  color: Colors.red,
-                  query: FirebaseFirestore.instance
-                      .collection('reports')
-                      .where('status', isEqualTo: 'cheater')
-                      .limit(500).snapshots(),
-                ),
-              ],
-            );
-          },
-        ),
+        // Stats grid — uses aggregation count() = 1 read per 1000 docs
+        _StatsGrid(),
         const SizedBox(height: 24),
 
         // Quick actions
@@ -178,42 +131,7 @@ class _OverviewTab extends StatelessWidget {
             fontWeight: FontWeight.bold,
           )),
         const SizedBox(height: 12),
-        StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('reports')
-              .limit(10)
-              .snapshots(),
-          builder: (context, snap) {
-            if (!snap.hasData || snap.data!.docs.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('No recent activity',
-                  style: TextStyle(color: Colors.grey)),
-              );
-            }
-            final docs = snap.data!.docs.toList();
-            docs.sort((a, b) {
-              final ta = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              final tb = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-              if (ta == null && tb == null) return 0;
-              if (ta == null) return 1;
-              if (tb == null) return -1;
-              return tb.compareTo(ta);
-            });
-            return Column(
-              children: docs.take(5).map((d) {
-                final data = d.data() as Map<String, dynamic>;
-                return _activityTile(
-                  icon: Icons.report,
-                  color: Colors.orange,
-                  title: '@${data['reporterUsername']} → @${data['reportedUsername']}',
-                  subtitle: data['reason'] ?? '',
-                  time: data['createdAt'] as Timestamp?,
-                );
-              }).toList(),
-            );
-          },
-        ),
+        _RecentActivityList(),
       ],
     );
   }
@@ -1277,4 +1195,272 @@ class _BroadcastTabState extends State<_BroadcastTab> {
   }
 }
 
+
+
+
+// ============================================================
+// STATS GRID — uses count() aggregation (super cheap!)
+// ============================================================
+class _StatsGrid extends StatefulWidget {
+  @override
+  State<_StatsGrid> createState() => _StatsGridState();
+}
+
+class _StatsGridState extends State<_StatsGrid> {
+  bool _loading = true;
+  int _users = 0;
+  int _posts = 0;
+  int _pending = 0;
+  int _cheaters = 0;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final db = FirebaseFirestore.instance;
+      final results = await Future.wait([
+        db.collection('users').count().get(),
+        db.collection('posts').count().get(),
+        db.collection('reports')
+            .where('status', isEqualTo: 'pending_proof')
+            .count().get(),
+        db.collection('reports')
+            .where('status', isEqualTo: 'cheater')
+            .count().get(),
+      ]);
+      if (mounted) {
+        setState(() {
+          _users = results[0].count ?? 0;
+          _posts = results[1].count ?? 0;
+          _pending = results[2].count ?? 0;
+          _cheaters = results[3].count ?? 0;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 600;
+            final crossCount = isWide ? 4 : 2;
+            return GridView.count(
+              crossAxisCount: crossCount,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.3,
+              children: [
+                _statCard(Icons.people, 'Total Users', Colors.blue, _users),
+                _statCard(Icons.article, 'Total Posts', Colors.green, _posts),
+                _statCard(Icons.report, 'Pending Reports', Colors.orange, _pending),
+                _statCard(Icons.warning_amber, 'Cheaters', Colors.red, _cheaters),
+              ],
+            );
+          },
+        ),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: SizedBox(
+              height: 16, width: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('Error: $_error',
+              style: const TextStyle(color: Colors.red, fontSize: 11)),
+          ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh, size: 14),
+            label: const Text('Refresh stats',
+              style: TextStyle(fontSize: 11)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statCard(IconData icon, String label, Color color, int count) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 28),
+          const SizedBox(height: 8),
+          Text('$count',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            )),
+          const SizedBox(height: 2),
+          Text(label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[700],
+            )),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// One-time load of the 5 most recent reports (no live listener).
+class _RecentActivityList extends StatefulWidget {
+  const _RecentActivityList();
+
+  @override
+  State<_RecentActivityList> createState() => _RecentActivityListState();
+}
+
+class _RecentActivityListState extends State<_RecentActivityList> {
+  bool _loading = true;
+  List<DocumentSnapshot> _docs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      // NO INDEX: fetch recent, sort in Dart
+      final snap = await FirebaseFirestore.instance
+          .collection('reports')
+          .limit(20)
+          .get();
+
+      final docs = snap.docs.toList();
+      docs.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      if (mounted) {
+        setState(() {
+          _docs = docs.take(5).toList();
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[RecentActivity] error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(
+          child: SizedBox(
+            height: 20, width: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_docs.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('No recent activity',
+          style: TextStyle(color: Colors.grey)),
+      );
+    }
+    return Column(
+      children: _docs.map((d) {
+        final data = d.data() as Map<String, dynamic>;
+        return _activityTile(
+          icon: Icons.report,
+          color: Colors.orange,
+          title: '@${data['reporterUsername']} → @${data['reportedUsername']}',
+          subtitle: data['reason'] ?? '',
+          time: data['createdAt'] as Timestamp?,
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _activityTile({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    Timestamp? time,
+  }) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: color.withValues(alpha: 0.15),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        title: Text(title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13)),
+        subtitle: subtitle.isNotEmpty
+          ? Text(subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12))
+          : null,
+        trailing: time != null
+          ? Text(_timeAgo(time),
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]))
+          : null,
+      ),
+    );
+  }
+
+  String _timeAgo(Timestamp ts) {
+    final diff = DateTime.now().difference(ts.toDate());
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    return '${diff.inDays}d';
+  }
+}
 

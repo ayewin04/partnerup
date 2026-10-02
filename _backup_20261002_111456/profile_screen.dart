@@ -232,12 +232,11 @@ class _ProfileScreenState extends State<ProfileScreen>
           const SizedBox(height: 12),
 
           // Stats + Admin + Logout in compact form
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 8,
-            runSpacing: 8,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _statPill('🤝', '$partnershipCount'),
+              const SizedBox(width: 8),
               _postsPill(uid),
             ],
           ),
@@ -781,7 +780,6 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_TabBarDelegate oldDelegate) => false;
 }
-
 
 
 

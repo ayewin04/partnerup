@@ -154,23 +154,20 @@ class _SearchScreenState extends State<SearchScreen>
     });
   }
 
-  // ============ POSTS ============
-  // Strategy: Fetch posts by keyword + sort in Dart.
-  // "Most Viewed" and "Most Liked" fetch a large batch then sort client-side.
+  // ============ POSTS (NO INDEX VERSION) ============
+  // Fetch by keyword only (or nothing), filter + sort in Dart.
   Future<void> _searchPosts(bool reset) async {
     final q = _query.trim().toLowerCase();
 
     Query query;
 
     if (q.isNotEmpty) {
-      // Keyword search on contentLower prefix
       query = FirebaseFirestore.instance
           .collection('posts')
           .where('contentLower', isGreaterThanOrEqualTo: q)
           .where('contentLower', isLessThan: '$q\uf8ff')
           .limit(100);
     } else {
-      // No keyword → fetch recent posts by default
       query = FirebaseFirestore.instance
           .collection('posts')
           .orderBy('createdAt', descending: true)
@@ -180,7 +177,6 @@ class _SearchScreenState extends State<SearchScreen>
     final snap = await query.get();
     var posts = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
 
-    // Apply filter in Dart
     final now = DateTime.now();
     switch (_filter) {
       case PostFilter.mostLiked:
@@ -532,5 +528,3 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 }
-
-

@@ -154,9 +154,9 @@ class PartnershipSheet extends StatelessWidget {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: [
-                              Flexible(child: _statChip('🤝', '$total', 'Total')),
-                              Flexible(child: _statChip('✅', '$activeCount', 'Active')),
-                              Flexible(child: _statChip('⚠️', '$reportedCount', 'Reported')),
+                              _statChip('🤝', '$total', 'Total'),
+                              _statChip('✅', '$activeCount', 'Active'),
+                              _statChip('⚠️', '$reportedCount', 'Reported'),
                             ],
                           ),
                         ),
@@ -341,4 +341,3 @@ class PartnershipSheet extends StatelessWidget {
     );
   }
 }
-

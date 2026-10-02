@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/current_user_cache.dart';
 
 // ============================================================
 // CHANGE EMAIL
@@ -440,6 +441,9 @@ class _ChangeUsernameScreenState extends State<ChangeUsernameScreen> {
         'lastUsernameChange': FieldValue.serverTimestamp(),
       });
 
+      // Update the cache immediately
+      CurrentUserCache.set(newUsername);
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -603,4 +607,5 @@ class ViewContractScreen extends StatelessWidget {
     );
   }
 }
+
 
