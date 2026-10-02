@@ -13,6 +13,7 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _currentUserId = FirebaseAuth.instance.currentUser!.uid;
+  int _visibleCount = 20;
 
   @override
   Widget build(BuildContext context) {
@@ -71,14 +72,34 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 );
               }
 
+              // Show only first 20 + Load More
+              final visible = unique.take(_visibleCount).toList();
+              final hasMore = unique.length > _visibleCount;
+
               return ListView.separated(
-                itemCount: unique.length,
+                itemCount: visible.length + (hasMore ? 1 : 0),
                 separatorBuilder: (_, __) =>
                   Divider(height: 1, color: Theme.of(context).dividerColor),
-                itemBuilder: (context, i) => _ChatRow(
-                  chatDoc: unique[i],
-                  currentUserId: _currentUserId,
-                ),
+                itemBuilder: (context, i) {
+                  if (i == visible.length) {
+                    return Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Center(
+                        child: OutlinedButton.icon(
+                          onPressed: () => setState(() {
+                            _visibleCount += 20;
+                          }),
+                          icon: const Icon(Icons.expand_more, size: 18),
+                          label: const Text('Load More'),
+                        ),
+                      ),
+                    );
+                  }
+                  return _ChatRow(
+                    chatDoc: visible[i],
+                    currentUserId: _currentUserId,
+                  );
+                },
               );
             },
           );
@@ -261,6 +282,7 @@ class _ChatRow extends StatelessWidget {
     return DateFormat('MMM d').format(d);
   }
 }
+
 
 
 

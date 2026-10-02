@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:15564026221:android:d9ba1b2a9835db0c22aa64",
+        "mobilesdk_app_id": "1:15564026221:android:2e38e2b08570f0e522aa64",
         "android_client_info": {
-          "package_name": "com.example.partnerup_app"
+          "package_name": "com.wedawon.partnerup"
         }
       },
       "oauth_client": [],

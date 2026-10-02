@@ -25,10 +25,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
      case TargetPlatform.windows:
         return windows;
       case TargetPlatform.linux:
@@ -52,14 +49,14 @@ class DefaultFirebaseOptions {
     storageBucket: 'partnerup-2f6a8.firebasestorage.app',
     measurementId: 'G-6QNS770NHT',
   );
+
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyAACXi8-oq7JECy4JPwZXRSCqaInUnFUyg',
-    appId: '1:15564026221:android:d9ba1b2a9835db0c22aa64',
+    appId: '1:15564026221:android:2e38e2b08570f0e522aa64',
     messagingSenderId: '15564026221',
     projectId: 'partnerup-2f6a8',
     storageBucket: 'partnerup-2f6a8.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyCzFN1uBDeJD5wOgFEKlLlzuxYfuhCt-Ak',
     appId: '1:15564026221:ios:7685d81ff84edeb622aa64',
@@ -77,5 +74,13 @@ class DefaultFirebaseOptions {
     authDomain: 'partnerup-2f6a8.firebaseapp.com',
     storageBucket: 'partnerup-2f6a8.firebasestorage.app',
     measurementId: 'G-67VWWDQ3SF',
+  );
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyCzFN1uBDeJD5wOgFEKlLlzuxYfuhCt-Ak',
+    appId: '1:15564026221:ios:7685d81ff84edeb622aa64',
+    messagingSenderId: '15564026221',
+    projectId: 'partnerup-2f6a8',
+    storageBucket: 'partnerup-2f6a8.firebasestorage.app',
+    iosBundleId: 'com.example.partnerupApp',
   );
 }

@@ -95,14 +95,14 @@ class _OverviewTab extends StatelessWidget {
                   label: 'Total Users',
                   color: Colors.blue,
                   query: FirebaseFirestore.instance
-                      .collection('users').limit(2000).snapshots(),
+                      .collection('users').limit(100).snapshots(),
                 ),
                 _statCard(
                   icon: Icons.article,
                   label: 'Total Posts',
                   color: Colors.green,
                   query: FirebaseFirestore.instance
-                      .collection('posts').limit(2000).snapshots(),
+                      .collection('posts').limit(100).snapshots(),
                 ),
                 _statCard(
                   icon: Icons.report,
@@ -400,7 +400,7 @@ class _UsersTabState extends State<_UsersTab> {
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
-                .collection('users').limit(500).snapshots(),
+                .collection('users').limit(50).snapshots(),
             builder: (context, snap) {
               if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());
@@ -833,7 +833,7 @@ class _PostsTabState extends State<_PostsTab> {
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
-                .collection('posts').limit(200).snapshots(),
+                .collection('posts').limit(50).snapshots(),
             builder: (context, snap) {
               if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());
@@ -1276,4 +1276,5 @@ class _BroadcastTabState extends State<_BroadcastTab> {
     );
   }
 }
+
 

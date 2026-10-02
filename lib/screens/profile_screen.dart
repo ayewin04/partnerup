@@ -4,6 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
+import '../widgets/paginated_list_view.dart';
+import 'partnership_sheet.dart';
 import 'splash_screen.dart';
 import 'settings_screen.dart';
 import 'admin_dashboard_screen.dart';
@@ -345,8 +347,34 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  // ============ TAB 1: MY POSTS ============
+  // ============ TAB 1: MY POSTS (20 + Load More) ============
   Widget _postsTab() {
+    // No composite index needed — fetch by userId only, sort in Dart.
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => FirebaseFirestore.instance
+          .collection('posts')
+          .where('userId', isEqualTo: uid)
+          .limit(20),
+      nextPageLoader: (lastDoc) => FirebaseFirestore.instance
+          .collection('posts')
+          .where('userId', isEqualTo: uid)
+          .startAfterDocument(lastDoc)
+          .limit(20),
+      itemBuilder: (context, doc) {
+        final post = PostModel.fromDoc(doc);
+        return PostCard(post: post, onDelete: () {});
+      },
+      emptyBuilder: (context) => _emptyState(
+        icon: Icons.article_outlined,
+        title: 'No posts yet',
+        subtitle: 'Create your first post from the feed!',
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _postsTabOld() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('posts')
@@ -387,8 +415,31 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  // ============ TAB 2: MY PARTNERSHIPS ============
+  // ============ TAB 2: MY PARTNERSHIPS (20 + Load More) ============
   Widget _partnershipsTab() {
+    // No composite index needed — filter by userA only.
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userA', isEqualTo: uid)
+          .limit(20),
+      nextPageLoader: (lastDoc) => FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userA', isEqualTo: uid)
+          .startAfterDocument(lastDoc)
+          .limit(20),
+      itemBuilder: (context, doc) => _partnershipCard(doc),
+      emptyBuilder: (context) => _emptyState(
+        icon: Icons.handshake_outlined,
+        title: 'No partnerships yet',
+        subtitle: 'Partner up with someone to see it here!',
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _partnershipsTabOld() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('partnerships')
@@ -441,7 +492,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _partnershipCard(QueryDocumentSnapshot doc) {
+  Widget _partnershipCard(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final userA = data['userA'] as String? ?? '';
     final userB = data['userB'] as String? ?? '';
@@ -460,7 +511,19 @@ class _ProfileScreenState extends State<ProfileScreen>
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Padding(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => PartnershipSheet(
+            currentUserId: uid!,
+            otherUserId: otherUserId,
+            otherUsername: otherUsername,
+          ),
+        ),
+        child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -562,6 +625,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ],
           ],
+        ),
         ),
       ),
     );
@@ -715,6 +779,10 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_TabBarDelegate oldDelegate) => false;
 }
+
+
+
+
 
 
 

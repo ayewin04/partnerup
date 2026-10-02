@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'contact_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class PrivacyPolicyScreen extends StatelessWidget {
   const PrivacyPolicyScreen({super.key});
@@ -8,6 +9,8 @@ class PrivacyPolicyScreen extends StatelessWidget {
   static const String founder = 'Wedawon';
   static const String country = 'Myanmar';
   static const String lastUpdated = 'September 11, 2026';
+  static const String publicUrl = 'https://ayewin04.github.io/partnerup-privacy/';
+  static const String deletionUrl = 'https://ayewin04.github.io/partnerup-deletion/';
 
   @override
   Widget build(BuildContext context) {
@@ -144,6 +147,42 @@ class PrivacyPolicyScreen extends StatelessWidget {
             const Divider(),
             const SizedBox(height: 20),
 
+            // Public Privacy Policy URL button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _openUrl(context, publicUrl),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open Web Version'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.blue[700],
+                  side: BorderSide(color: Colors.blue[700]!),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Account Deletion URL button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _openUrl(context, deletionUrl),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Account Deletion Info'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red[700],
+                  side: BorderSide(color: Colors.red[700]!),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
             // Contact button
             SizedBox(
               width: double.infinity,
@@ -199,4 +238,24 @@ class PrivacyPolicyScreen extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _openUrl(BuildContext context, String url) async {
+    final uri = Uri.parse(url);
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open: $url')),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
 }
+

@@ -1,4 +1,4 @@
-package com.example.partnerup_app
+package com.wedawon.partnerup
 
 import io.flutter.embedding.android.FlutterActivity
 

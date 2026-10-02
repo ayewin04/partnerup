@@ -135,6 +135,7 @@ class PostModel {
 // ===== FILE: lib\screens\about_screen.dart =====
 import 'package:flutter/material.dart';
 import 'contact_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -145,6 +146,8 @@ class AboutScreen extends StatelessWidget {
   static const String country = 'Myanmar';
   static const String website = 'wedawon.com';
   static const String tagline = 'Find your perfect partner';
+  static const String privacyUrl = 'https://ayewin04.github.io/partnerup-privacy/';
+  static const String deletionUrl = 'https://ayewin04.github.io/partnerup-deletion/';
 
   @override
   Widget build(BuildContext context) {
@@ -267,6 +270,42 @@ class AboutScreen extends StatelessWidget {
 
             const SizedBox(height: 20),
 
+            // Privacy Policy button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _openUrl(context, privacyUrl),
+                icon: const Icon(Icons.privacy_tip),
+                label: const Text('View Privacy Policy (Web)'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.blue[700],
+                  side: BorderSide(color: Colors.blue[700]!),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // Account Deletion button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _openUrl(context, deletionUrl),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Account Deletion Info (Web)'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red[700],
+                  side: BorderSide(color: Colors.red[700]!),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+
             // Contact button
             SizedBox(
               width: double.infinity,
@@ -342,7 +381,27 @@ class AboutScreen extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _openUrl(BuildContext context, String url) async {
+    final uri = Uri.parse(url);
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open: $url')),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error opening link: $e')),
+      );
+    }
+  }
 }
+
 
 
 // ===== FILE: lib\screens\activity_screen.dart =====
@@ -725,14 +784,14 @@ class _OverviewTab extends StatelessWidget {
                   label: 'Total Users',
                   color: Colors.blue,
                   query: FirebaseFirestore.instance
-                      .collection('users').limit(2000).snapshots(),
+                      .collection('users').limit(100).snapshots(),
                 ),
                 _statCard(
                   icon: Icons.article,
                   label: 'Total Posts',
                   color: Colors.green,
                   query: FirebaseFirestore.instance
-                      .collection('posts').limit(2000).snapshots(),
+                      .collection('posts').limit(100).snapshots(),
                 ),
                 _statCard(
                   icon: Icons.report,
@@ -1030,7 +1089,7 @@ class _UsersTabState extends State<_UsersTab> {
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
-                .collection('users').limit(500).snapshots(),
+                .collection('users').limit(50).snapshots(),
             builder: (context, snap) {
               if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());
@@ -1463,7 +1522,7 @@ class _PostsTabState extends State<_PostsTab> {
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
-                .collection('posts').limit(200).snapshots(),
+                .collection('posts').limit(50).snapshots(),
             builder: (context, snap) {
               if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());
@@ -1906,6 +1965,7 @@ class _BroadcastTabState extends State<_BroadcastTab> {
     );
   }
 }
+
 
 
 
@@ -2666,6 +2726,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     return '${diff.inHours}h';
   }
 }
+
 
 
 
@@ -3460,6 +3521,7 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _currentUserId = FirebaseAuth.instance.currentUser!.uid;
+  int _visibleCount = 20;
 
   @override
   Widget build(BuildContext context) {
@@ -3518,14 +3580,34 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 );
               }
 
+              // Show only first 20 + Load More
+              final visible = unique.take(_visibleCount).toList();
+              final hasMore = unique.length > _visibleCount;
+
               return ListView.separated(
-                itemCount: unique.length,
+                itemCount: visible.length + (hasMore ? 1 : 0),
                 separatorBuilder: (_, __) =>
                   Divider(height: 1, color: Theme.of(context).dividerColor),
-                itemBuilder: (context, i) => _ChatRow(
-                  chatDoc: unique[i],
-                  currentUserId: _currentUserId,
-                ),
+                itemBuilder: (context, i) {
+                  if (i == visible.length) {
+                    return Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Center(
+                        child: OutlinedButton.icon(
+                          onPressed: () => setState(() {
+                            _visibleCount += 20;
+                          }),
+                          icon: const Icon(Icons.expand_more, size: 18),
+                          label: const Text('Load More'),
+                        ),
+                      ),
+                    );
+                  }
+                  return _ChatRow(
+                    chatDoc: visible[i],
+                    currentUserId: _currentUserId,
+                  );
+                },
               );
             },
           );
@@ -3713,6 +3795,7 @@ class _ChatRow extends StatelessWidget {
 
 
 
+
 // ===== FILE: lib\screens\chat_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -3720,6 +3803,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../services/partnership_service.dart';
 import 'report_sheet.dart';
+import 'partnership_sheet.dart';
 import '../services/block_service.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -3799,7 +3883,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final messagesRef = FirebaseFirestore.instance
           .collection('chats').doc(_chatId)
           .collection('messages');
-      final all = await messagesRef.limit(200).get();
+      final all = await messagesRef.limit(50).get();
       final toUpdate = all.docs.where((d) {
         final data = d.data();
         return data['senderId'] != _currentUserId &&
@@ -3942,76 +4026,159 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (ctx) {
         String? error;
         return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
+          builder: (ctx, setDialogState) => Dialog(
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16)),
-            title: const Text('Propose Partnership?'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('You are about to send a partnership request to '
-                  '${widget.otherUsername}.'),
-                const SizedBox(height: 16),
-                const Text(
-                  'What is this partnership for?',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 20, vertical: 24),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+                maxWidth: 500,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ---- SCROLLABLE CONTENT ----
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Title
+                          const Text('Propose Partnership?',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            )),
+                          const SizedBox(height: 12),
+                          Text(
+                            'You are about to send a partnership request to '
+                            '${widget.otherUsername}.',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Label
+                          const Text(
+                            'What is this partnership for?',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+
+                          // Text field
+                          TextField(
+                            controller: reasonController,
+                            maxLength: 200,
+                            maxLines: 3,
+                            minLines: 2,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              hintText: 'e.g. Tennis at 6 PM tomorrow',
+                              errorText: error,
+                              counterText: '',
+                              isDense: true,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // Warning
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.orange[50],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: Colors.orange[200]!),
+                            ),
+                            child: const Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.info_outline,
+                                  size: 16, color: Colors.orange),
+                                SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'If both accept, you enter a binding '
+                                    'agreement. This reason will be shown '
+                                    'if a report is made.',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: reasonController,
-                  maxLength: 200,
-                  maxLines: 3,
-                  minLines: 1,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    hintText: 'e.g. Tennis at 6 PM tomorrow',
-                    errorText: error,
-                    counterText: '',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10)),
+
+                  // ---- FIXED ACTION BUTTONS ----
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            ),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              final reason =
+                                  reasonController.text.trim();
+                              if (reason.isEmpty) {
+                                setDialogState(() =>
+                                  error = 'Please enter a reason');
+                                return;
+                              }
+                              if (reason.length < 3) {
+                                setDialogState(() => error =
+                                  'Reason must be at least 3 characters');
+                                return;
+                              }
+                              Navigator.pop(ctx, {
+                                'reason': reason,
+                                'postId': widget.postId ?? '',
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green[600],
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            ),
+                            child: const Text('Send Request',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  '⚠️ If both accept, you enter a binding agreement. '
-                  'This reason will be shown if a report is made.',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-              ],
+                ],
+              ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final reason = reasonController.text.trim();
-                  if (reason.isEmpty) {
-                    setDialogState(() =>
-                      error = 'Please enter a reason');
-                    return;
-                  }
-                  if (reason.length < 3) {
-                    setDialogState(() =>
-                      error = 'Reason must be at least 3 characters');
-                    return;
-                  }
-                  Navigator.pop(ctx, {
-                    'reason': reason,
-                    'postId': widget.postId ?? '',
-                  });
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green[600],
-                  foregroundColor: Colors.white),
-                child: const Text('Send Request'),
-              ),
-            ],
           ),
         );
       },
@@ -4053,6 +4220,19 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _showPartnerships() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PartnershipSheet(
+        currentUserId: _currentUserId,
+        otherUserId: widget.otherUserId,
+        otherUsername: widget.otherUsername,
+      ),
+    );
+  }
+
   String _timeAgo(Timestamp? ts) {
     if (ts == null) return '';
     return DateFormat('HH:mm').format(ts.toDate());
@@ -4087,8 +4267,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 40,  // tighter back button area
-        titleSpacing: 0,    // no extra gap
+        toolbarHeight: 60,   // slightly taller for 2 lines
+        leadingWidth: 40,
+        titleSpacing: 0,
         title: Row(
           children: [
             CircleAvatar(
@@ -4110,14 +4291,33 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(widget.otherUsername,
+                  // Username
+                  Text(
+                    widget.otherUsername,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 15)),
-                  Flexible(
-                    child: PartnershipCountLabel(
-                      userA: _currentUserId,
-                      userB: widget.otherUserId,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      height: 1.1,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  // Partnership count — single line, small
+                  GestureDetector(
+                    onTap: _showPartnerships,
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      height: 14,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: PartnershipCountLabel(
+                          userA: _currentUserId,
+                          userB: widget.otherUserId,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -4126,6 +4326,12 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // View partnerships history
+          IconButton(
+            icon: const Icon(Icons.history, size: 20),
+            tooltip: 'Partnership history',
+            onPressed: () => _showPartnerships(),
+          ),
           // Report button (only visible if partnered before)
           _ReportMenuButton(
             currentUserId: _currentUserId,
@@ -4214,6 +4420,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   .collection('chats').doc(_chatId)
                   .collection('messages')
                   .orderBy('timestamp', descending: false)
+                  .limitToLast(50)
                   .snapshots(),
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
@@ -4524,7 +4731,12 @@ class PartnershipCountLabel extends StatelessWidget {
               : '🤝 $count partnerships',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 11, color: Colors.white70),
+          softWrap: false,
+          style: const TextStyle(
+            fontSize: 10,
+            color: Colors.white70,
+            height: 1,
+          ),
         );
       },
     );
@@ -4664,6 +4876,13 @@ class _ReportMenuButton extends StatelessWidget {
     );
   }
 }
+
+
+
+
+
+
+
 
 
 
@@ -5991,6 +6210,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../widgets/paginated_list_view.dart';
 import 'chat_screen.dart';
 
 class LeaderboardScreen extends StatefulWidget {
@@ -6002,6 +6222,7 @@ class LeaderboardScreen extends StatefulWidget {
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
   final _currentUserId = FirebaseAuth.instance.currentUser?.uid;
+  final _key = GlobalKey<PaginatedListViewState>();
 
   @override
   Widget build(BuildContext context) {
@@ -6013,139 +6234,60 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
-            onPressed: () {
-              setState(() {});
-            },
+            onPressed: () => _key.currentState?.refresh(),
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        // Simple query — no filter, no orderBy → no composite index needed.
-        // We fetch up to 500 users (bigger than top 100) then sort in Dart.
-        stream: FirebaseFirestore.instance
-            .collection('users')
-            .limit(500)
-            .snapshots(),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
+      body: Column(
+        children: [
+          _myRankBanner(),
+          Expanded(
+            child: PaginatedListView(
+              key: _key,
+              pageSize: 20,
+              firstPageQuery: () => FirebaseFirestore.instance
+                  .collection('users')
+                  .orderBy('partnershipCount', descending: true)
+                  .limit(20),
+              nextPageLoader: (lastDoc) => FirebaseFirestore.instance
+                  .collection('users')
+                  .orderBy('partnershipCount', descending: true)
+                  .startAfterDocument(lastDoc)
+                  .limit(20),
+              itemBuilder: (context, doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                if (data['isBanned'] == true) {
+                  return const SizedBox.shrink();
+                }
+                return _leaderboardRow(
+                  uid: doc.id,
+                  username: data['username'] ?? 'Unknown',
+                  partnershipCount: data['partnershipCount'] ?? 0,
+                  isOnline: data['isOnline'] == true,
+                  isMe: doc.id == _currentUserId,
+                );
+              },
+              emptyBuilder: (context) => const Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.error_outline,
-                      size: 60, color: Colors.red),
-                    const SizedBox(height: 12),
-                    const Text('Failed to load leaderboard',
-                      style: TextStyle(fontSize: 16)),
-                    const SizedBox(height: 8),
-                    Text('${snap.error}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 12, color: Colors.grey)),
+                    Icon(Icons.emoji_events_outlined,
+                      size: 80, color: Colors.grey),
+                    SizedBox(height: 16),
+                    Text('No rankings yet',
+                      style: TextStyle(fontSize: 18, color: Colors.grey)),
                   ],
                 ),
               ),
-            );
-          }
-
-          if (!snap.hasData || snap.data!.docs.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.emoji_events_outlined,
-                    size: 80, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text('No rankings yet',
-                    style: TextStyle(fontSize: 18, color: Colors.grey)),
-                  SizedBox(height: 8),
-                  Text('Complete partnerships to appear here!',
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
-                ],
-              ),
-            );
-          }
-
-          // ---- SORT + FILTER IN DART ----
-          final allDocs = snap.data!.docs.where((d) {
-            final data = d.data() as Map<String, dynamic>;
-            // Filter out banned users
-            return data['isBanned'] != true;
-          }).toList();
-
-          // Sort by partnershipCount desc
-          allDocs.sort((a, b) {
-            final aData = a.data() as Map<String, dynamic>;
-            final bData = b.data() as Map<String, dynamic>;
-            final aCount = (aData['partnershipCount'] ?? 0) as int;
-            final bCount = (bData['partnershipCount'] ?? 0) as int;
-            return bCount.compareTo(aCount);
-          });
-
-          // Take top 100
-          final users = allDocs.take(100).toList();
-
-          // Find my rank in top 100
-          int? myRank;
-          for (int i = 0; i < users.length; i++) {
-            if (users[i].id == _currentUserId) {
-              myRank = i + 1;
-              break;
-            }
-          }
-
-          // If not in top 100, compute my rank among all users
-          int? myGlobalRank;
-          if (myRank == null && _currentUserId != null) {
-            final myIndex = allDocs.indexWhere(
-                (d) => d.id == _currentUserId);
-            if (myIndex >= 0) {
-              myGlobalRank = myIndex + 1;
-            }
-          }
-
-          return Column(
-            children: [
-              _myRankBanner(myRank, myGlobalRank, users),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.only(
-                    top: 4, bottom: 20),
-                  itemCount: users.length,
-                  itemBuilder: (context, i) {
-                    final doc = users[i];
-                    final rank = i + 1;
-                    final data = doc.data() as Map<String, dynamic>;
-                    return _leaderboardRow(
-                      rank: rank,
-                      uid: doc.id,
-                      username: data['username'] ?? 'Unknown',
-                      partnershipCount:
-                          data['partnershipCount'] ?? 0,
-                      isOnline: data['isOnline'] == true,
-                      isMe: doc.id == _currentUserId,
-                    );
-                  },
-                ),
-              ),
-            ],
-          );
-        },
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  // ---- My rank banner ----
-  Widget _myRankBanner(int? myRank, int? myGlobalRank,
-      List<QueryDocumentSnapshot> users) {
+  Widget _myRankBanner() {
     if (_currentUserId == null) return const SizedBox.shrink();
-
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance
           .collection('users').doc(_currentUserId).snapshots(),
@@ -6155,16 +6297,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         }
         final data = snap.data!.data() as Map<String, dynamic>;
         final myCount = data['partnershipCount'] ?? 0;
-
-        String rankText;
-        if (myRank != null) {
-          rankText = 'Your rank: #$myRank';
-        } else if (myGlobalRank != null) {
-          rankText = 'Your rank: #$myGlobalRank';
-        } else {
-          rankText = 'Your rank: not ranked yet';
-        }
-
         return Container(
           width: double.infinity,
           margin: const EdgeInsets.all(12),
@@ -6180,24 +6312,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               const Icon(Icons.person, color: Colors.blue, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(rankText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
-                      ),
-                    ),
-                    Text('🤝 $myCount partnerships',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.blue[700],
-                      )),
-                  ],
+                child: Text(
+                  '🤝 $myCount partnerships',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
                 ),
               ),
             ],
@@ -6207,9 +6328,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     );
   }
 
-  // ---- Row renderer ----
   Widget _leaderboardRow({
-    required int rank,
     required String uid,
     required String username,
     required int partnershipCount,
@@ -6218,11 +6337,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   }) {
     return InkWell(
       onTap: () {
-        if (isMe) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("You can't chat with yourself")));
-          return;
-        }
+        if (isMe) return;
         Navigator.push(context, MaterialPageRoute(
           builder: (_) => ChatScreen(
             otherUserId: uid,
@@ -6231,10 +6346,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ));
       },
       child: Container(
-        margin: const EdgeInsets.symmetric(
-          horizontal: 12, vertical: 4),
-        padding: const EdgeInsets.symmetric(
-          horizontal: 12, vertical: 10),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: isMe ? Colors.blue[50] : Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -6245,20 +6358,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ),
         child: Row(
           children: [
-            SizedBox(
-              width: 40,
-              child: _rankBadge(rank),
-            ),
-            const SizedBox(width: 10),
-
             Stack(
               children: [
                 CircleAvatar(
                   radius: 22,
                   backgroundColor: Colors.blue[100],
                   child: Text(
-                    username.isNotEmpty
-                      ? username[0].toUpperCase() : '?',
+                    username.isNotEmpty ? username[0].toUpperCase() : '?',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -6274,15 +6380,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                       decoration: BoxDecoration(
                         color: Colors.green,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white, width: 2),
+                        border: Border.all(color: Colors.white, width: 2),
                       ),
                     ),
                   ),
               ],
             ),
             const SizedBox(width: 10),
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -6293,30 +6397,22 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
+                      fontSize: 14, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     '🤝 $partnershipCount partnership${partnershipCount == 1 ? '' : 's'}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[700],
-                    ),
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 6),
-
             if (!isMe)
               IconButton(
                 icon: const Icon(Icons.chat_bubble_outline,
                   color: Colors.blue, size: 20),
-                tooltip: 'Chat',
                 onPressed: () => Navigator.push(context,
                   MaterialPageRoute(builder: (_) => ChatScreen(
                     otherUserId: uid,
@@ -6327,45 +6423,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
             else
               const Padding(
                 padding: EdgeInsets.all(8),
-                child: Icon(Icons.star,
-                  color: Colors.amber, size: 20),
+                child: Icon(Icons.star, color: Colors.amber, size: 20),
               ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _rankBadge(int rank) {
-    if (rank == 1) {
-      return const Center(child: Text('🥇',
-        style: TextStyle(fontSize: 24)));
-    }
-    if (rank == 2) {
-      return const Center(child: Text('🥈',
-        style: TextStyle(fontSize: 24)));
-    }
-    if (rank == 3) {
-      return const Center(child: Text('🥉',
-        style: TextStyle(fontSize: 24)));
-    }
-
-    return Center(
-      child: Container(
-        width: 32, height: 32,
-        decoration: BoxDecoration(
-          color: rank <= 10 ? Colors.blue[50] : Colors.grey[100],
-          shape: BoxShape.circle,
-        ),
-        child: Center(
-          child: Text(
-            '#$rank',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: rank <= 10 ? Colors.blue[700] : Colors.grey[700],
-            ),
-          ),
         ),
       ),
     );
@@ -7461,6 +7521,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import '../widgets/paginated_list_view.dart';
 import 'chat_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -7472,6 +7533,12 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   final _currentUserId = FirebaseAuth.instance.currentUser?.uid;
+  final _key = GlobalKey<PaginatedListViewState>();
+
+  Query _base() => FirebaseFirestore.instance
+      .collection('users').doc(_currentUserId)
+      .collection('notifications')
+      .orderBy('createdAt', descending: true);
 
   @override
   Widget build(BuildContext context) {
@@ -7486,12 +7553,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         title: const Text('Notifications',
           style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          // Mark all as read
           StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('users').doc(_currentUserId)
                 .collection('notifications')
                 .where('isRead', isEqualTo: false)
+                .limit(20)
                 .snapshots(),
             builder: (context, snap) {
               final unread = snap.data?.docs.length ?? 0;
@@ -7501,91 +7568,42 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 icon: const Icon(Icons.done_all,
                   color: Colors.white, size: 18),
                 label: const Text('Mark all read',
-                  style: TextStyle(
-                    color: Colors.white, fontSize: 12)),
+                  style: TextStyle(color: Colors.white, fontSize: 12)),
               );
             },
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('users').doc(_currentUserId)
-            .collection('notifications')
-            .orderBy('createdAt', descending: true)
-            .limit(100)
-            .snapshots(),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text('Error: ${snap.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.red)),
-              ),
-            );
-          }
-
-          if (!snap.hasData || snap.data!.docs.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.notifications_none,
-                    size: 80, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text('No notifications yet',
-                    style: TextStyle(fontSize: 18, color: Colors.grey)),
-                  SizedBox(height: 8),
-                  Text('We\'ll notify you about partnerships, likes, and more.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
-                ],
-              ),
-            );
-          }
-
-          final docs = snap.data!.docs;
-
-          // Group by date
-          final grouped = <String, List<QueryDocumentSnapshot>>{};
-          for (final doc in docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final ts = data['createdAt'] as Timestamp?;
-            final label = ts != null ? _dateGroupLabel(ts) : 'Earlier';
-            grouped.putIfAbsent(label, () => []).add(doc);
-          }
-
-          // Build flat list with headers
-          final items = <Widget>[];
-          for (final entry in grouped.entries) {
-            items.add(_sectionHeader(entry.key));
-            for (final doc in entry.value) {
-              items.add(_notificationRow(doc));
-            }
-          }
-
-          return ListView(
-            padding: const EdgeInsets.only(bottom: 20),
-            children: items,
-          );
-        },
+      body: PaginatedListView(
+        key: _key,
+        pageSize: 20,
+        firstPageQuery: () => _base().limit(20),
+        nextPageLoader: (lastDoc) =>
+            _base().startAfterDocument(lastDoc).limit(20),
+        itemBuilder: (context, doc) => _notificationRow(doc),
+        emptyBuilder: (context) => const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.notifications_none,
+                size: 80, color: Colors.grey),
+              SizedBox(height: 16),
+              Text('No notifications yet',
+                style: TextStyle(fontSize: 18, color: Colors.grey)),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  // ============ MARK ALL AS READ ============
   Future<void> _markAllAsRead(int count) async {
     try {
       final unread = await FirebaseFirestore.instance
           .collection('users').doc(_currentUserId)
           .collection('notifications')
           .where('isRead', isEqualTo: false)
+          .limit(50)
           .get();
 
       final batch = FirebaseFirestore.instance.batch();
@@ -7607,7 +7625,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  // ============ MARK SINGLE AS READ ============
   Future<void> _markAsRead(String notificationId) async {
     try {
       await FirebaseFirestore.instance
@@ -7619,8 +7636,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  // ============ ROW RENDERER ============
-  Widget _notificationRow(QueryDocumentSnapshot doc) {
+  Widget _notificationRow(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final type = data['type'] ?? 'info';
     final title = data['title'] ?? 'Notification';
@@ -7628,39 +7644,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final isRead = data['isRead'] == true;
     final ts = data['createdAt'] as Timestamp?;
     final extra = data['data'] as Map<String, dynamic>?;
-
     final visual = _visualFor(type);
 
     return Material(
-      color: isRead
-      ? Theme.of(context).cardColor
-      : (Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF1A2A3A)
-          : Colors.blue[50]),
+      color: isRead ? Colors.white : Colors.blue[50],
       child: InkWell(
         onTap: () async {
           if (!isRead) await _markAsRead(doc.id);
           _handleTap(type, extra);
         },
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Icon badge
               Container(
                 width: 40, height: 40,
                 decoration: BoxDecoration(
                   color: visual.color.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(visual.icon,
-                  color: visual.color, size: 20),
+                child: Icon(visual.icon, color: visual.color, size: 20),
               ),
               const SizedBox(width: 12),
-
-              // Content
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -7675,10 +7681,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: isRead
-                                  ? FontWeight.w500
-                                  : FontWeight.bold,
-                              color: isRead
-                                  ? Colors.black87 : Colors.black,
+                                  ? FontWeight.w500 : FontWeight.bold,
                             ),
                           ),
                         ),
@@ -7699,18 +7702,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[700],
-                        height: 1.35,
-                      ),
+                        fontSize: 13, color: Colors.grey[700],
+                        height: 1.35),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       ts != null ? _shortTime(ts) : '',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey[500],
-                      ),
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                     ),
                   ],
                 ),
@@ -7722,15 +7720,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  // ============ TAP HANDLER ============
   void _handleTap(String type, Map<String, dynamic>? extra) {
     if (extra == null) return;
-
-    // Navigate based on notification type
     final chatId = extra['chatId'] as String?;
     final otherUserId = extra['otherUserId'] as String?;
     final otherUsername = extra['otherUsername'] as String?;
-
     if (chatId != null && otherUserId != null && otherUsername != null) {
       Navigator.push(context, MaterialPageRoute(
         builder: (_) => ChatScreen(
@@ -7738,53 +7732,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           otherUsername: otherUsername,
         ),
       ));
-      return;
     }
-
-    // Future: handle other types (post, partnership, etc.)
-  }
-
-  // ============ HELPERS ============
-  Widget _sectionHeader(String label) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: Theme.of(context).brightness == Brightness.dark
-      ? Colors.lightBlueAccent
-      : Colors.blue[700],
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
-
-  String _dateGroupLabel(Timestamp ts) {
-    final d = ts.toDate();
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final notifDay = DateTime(d.year, d.month, d.day);
-    final diff = today.difference(notifDay).inDays;
-    if (diff == 0) return 'Today';
-    if (diff == 1) return 'Yesterday';
-    if (diff < 7) return 'This Week';
-    if (diff < 30) return 'This Month';
-    return 'Earlier';
   }
 
   String _shortTime(Timestamp ts) {
     final d = ts.toDate();
     final now = DateTime.now();
     final diff = now.difference(d);
-
     if (diff.inSeconds < 60) return 'just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24 && now.day == d.day) {
-      return '${diff.inHours}h ago';
-    }
+    if (diff.inHours < 24 && now.day == d.day) return '${diff.inHours}h ago';
     if (now.difference(d).inDays == 1) return 'Yesterday';
     if (now.difference(d).inDays < 7) {
       return DateFormat('EEE HH:mm').format(d);
@@ -7794,43 +7751,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   _NotificationVisual _visualFor(String type) {
     switch (type) {
-      case 'partnership_accepted':
-        return _NotificationVisual(
-          Icons.handshake, Colors.green);
-      case 'partnership_cancelled':
-        return _NotificationVisual(
-          Icons.cancel, Colors.red);
-      case 'partnership_expired':
-        return _NotificationVisual(
-          Icons.timer_off, Colors.orange);
-      case 'like':
-        return _NotificationVisual(
-          Icons.favorite, Colors.pink);
-      case 'comment':
-        return _NotificationVisual(
-          Icons.chat_bubble, Colors.blue);
-      case 'follow':
-        return _NotificationVisual(
-          Icons.person_add, Colors.purple);
-      case 'report_submitted':
-        return _NotificationVisual(
-          Icons.report, Colors.orange);
-      case 'report_received':
-        return _NotificationVisual(
-          Icons.warning_amber, Colors.red);
-      case 'report_proof_submitted':
-        return _NotificationVisual(
-          Icons.description, Colors.blue);
+      case 'partnership_accepted': return _NotificationVisual(Icons.handshake, Colors.green);
+      case 'partnership_cancelled': return _NotificationVisual(Icons.cancel, Colors.red);
+      case 'partnership_expired': return _NotificationVisual(Icons.timer_off, Colors.orange);
+      case 'like': return _NotificationVisual(Icons.favorite, Colors.pink);
+      case 'comment': return _NotificationVisual(Icons.chat_bubble, Colors.blue);
+      case 'follow': return _NotificationVisual(Icons.person_add, Colors.purple);
+      case 'report_submitted': return _NotificationVisual(Icons.report, Colors.orange);
+      case 'report_received': return _NotificationVisual(Icons.warning_amber, Colors.red);
+      case 'report_proof_submitted': return _NotificationVisual(Icons.description, Colors.blue);
       case 'report_accepted':
-      case 'admin_action':
-        return _NotificationVisual(
-          Icons.verified, Colors.green);
-      case 'partner_became_cheater':
-        return _NotificationVisual(
-          Icons.gpp_bad, Colors.red);
-      default:
-        return _NotificationVisual(
-          Icons.notifications, Colors.blueGrey);
+      case 'admin_action': return _NotificationVisual(Icons.verified, Colors.green);
+      case 'partner_became_cheater': return _NotificationVisual(Icons.gpp_bad, Colors.red);
+      default: return _NotificationVisual(Icons.notifications, Colors.blueGrey);
     }
   }
 }
@@ -7843,10 +7776,356 @@ class _NotificationVisual {
 
 
 
+// ===== FILE: lib\screens\partnership_sheet.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+
+class PartnershipSheet extends StatelessWidget {
+  final String currentUserId;
+  final String otherUserId;
+  final String otherUsername;
+
+  const PartnershipSheet({
+    super.key,
+    required this.currentUserId,
+    required this.otherUserId,
+    required this.otherUsername,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.8,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Handle
+          Container(
+            margin: const EdgeInsets.only(top: 8, bottom: 8),
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // Header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.handshake, color: Colors.blue, size: 24),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Partnerships with $otherUsername',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+
+          // Body
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('partnerships')
+                  .where('userA', whereIn: [currentUserId, otherUserId])
+                  .limit(100)
+                  .snapshots(),
+              builder: (context, snapA) {
+                return StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('partnerships')
+                      .where('userB', whereIn: [currentUserId, otherUserId])
+                      .limit(100)
+                      .snapshots(),
+                  builder: (context, snapB) {
+                    // Merge both sides
+                    final all = <QueryDocumentSnapshot>[];
+                    if (snapA.hasData) all.addAll(snapA.data!.docs);
+                    if (snapB.hasData) all.addAll(snapB.data!.docs);
+
+                    // Dedupe + filter to only partnerships between these 2
+                    final seen = <String>{};
+                    final relevant = <QueryDocumentSnapshot>[];
+                    for (final d in all) {
+                      if (!seen.add(d.id)) continue;
+                      final data = d.data() as Map<String, dynamic>;
+                      final a = data['userA'];
+                      final b = data['userB'];
+                      if ((a == currentUserId && b == otherUserId) ||
+                          (a == otherUserId && b == currentUserId)) {
+                        relevant.add(d);
+                      }
+                    }
+
+                    // Sort by createdAt desc
+                    relevant.sort((a, b) {
+                      final ta = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
+                      final tb = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
+                      if (ta == null && tb == null) return 0;
+                      if (ta == null) return 1;
+                      if (tb == null) return -1;
+                      return tb.compareTo(ta);
+                    });
+
+                    if (relevant.isEmpty) {
+                      return const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.handshake_outlined,
+                                size: 60, color: Colors.grey),
+                              SizedBox(height: 12),
+                              Text('No partnerships yet',
+                                style: TextStyle(
+                                  fontSize: 15, color: Colors.grey)),
+                              SizedBox(height: 6),
+                              Text(
+                                'Partner up from the chat to see agreements here.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
+                    // Header stats
+                    final total = relevant.length;
+                    final activeCount = relevant.where((d) {
+                      final data = d.data() as Map<String, dynamic>;
+                      return data['isActive'] != false;
+                    }).length;
+                    final reportedCount = relevant.where((d) {
+                      final data = d.data() as Map<String, dynamic>;
+                      return data['isReported'] == true;
+                    }).length;
+
+                    return Column(
+                      children: [
+                        // Stats bar
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                          color: Colors.blue[50],
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _statChip('🤝', '$total', 'Total'),
+                              _statChip('✅', '$activeCount', 'Active'),
+                              _statChip('⚠️', '$reportedCount', 'Reported'),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // Partnership list
+                        Expanded(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.all(12),
+                            itemCount: relevant.length,
+                            itemBuilder: (_, i) => _partnershipItem(
+                              context, relevant[i], i + 1, total - i,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statChip(String emoji, String value, String label) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 18)),
+        const SizedBox(height: 2),
+        Text(value,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.blue,
+          )),
+        Text(label,
+          style: TextStyle(fontSize: 10, color: Colors.grey[700])),
+      ],
+    );
+  }
+
+  Widget _partnershipItem(
+    BuildContext context,
+    QueryDocumentSnapshot doc,
+    int index,
+    int displayNumber,
+  ) {
+    final data = doc.data() as Map<String, dynamic>;
+    final reason = data['reason'] ?? '';
+    final createdAt = data['createdAt'] as Timestamp?;
+    final isReported = data['isReported'] == true;
+    final isActive = data['isActive'] != false;
+
+    String statusLabel;
+    Color statusColor;
+    IconData statusIcon;
+
+    if (isReported) {
+      statusLabel = 'REPORTED';
+      statusColor = Colors.orange;
+      statusIcon = Icons.warning_amber;
+    } else if (isActive) {
+      statusLabel = 'ACTIVE';
+      statusColor = Colors.green;
+      statusIcon = Icons.check_circle;
+    } else {
+      statusLabel = 'ENDED';
+      statusColor = Colors.grey;
+      statusIcon = Icons.cancel;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isReported
+              ? Colors.orange[200]!
+              : Colors.grey[200]!,
+          width: 1,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'Partnership #$displayNumber',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: statusColor),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(statusIcon, size: 10, color: statusColor),
+                      const SizedBox(width: 3),
+                      Text(
+                        statusLabel,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          color: statusColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Reason
+            if (reason.isNotEmpty) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.description_outlined,
+                    size: 14, color: Colors.grey[700]),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      reason,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // Date
+            if (createdAt != null)
+              Row(
+                children: [
+                  Icon(Icons.calendar_today,
+                    size: 12, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Agreed on ${DateFormat('MMM d, y').format(createdAt.toDate())}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 
 // ===== FILE: lib\screens\privacy_policy_screen.dart =====
 import 'package:flutter/material.dart';
 import 'contact_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class PrivacyPolicyScreen extends StatelessWidget {
   const PrivacyPolicyScreen({super.key});
@@ -7855,6 +8134,8 @@ class PrivacyPolicyScreen extends StatelessWidget {
   static const String founder = 'Wedawon';
   static const String country = 'Myanmar';
   static const String lastUpdated = 'September 11, 2026';
+  static const String publicUrl = 'https://ayewin04.github.io/partnerup-privacy/';
+  static const String deletionUrl = 'https://ayewin04.github.io/partnerup-deletion/';
 
   @override
   Widget build(BuildContext context) {
@@ -7991,6 +8272,42 @@ class PrivacyPolicyScreen extends StatelessWidget {
             const Divider(),
             const SizedBox(height: 20),
 
+            // Public Privacy Policy URL button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _openUrl(context, publicUrl),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open Web Version'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.blue[700],
+                  side: BorderSide(color: Colors.blue[700]!),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Account Deletion URL button
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _openUrl(context, deletionUrl),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Account Deletion Info'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red[700],
+                  side: BorderSide(color: Colors.red[700]!),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
             // Contact button
             SizedBox(
               width: double.infinity,
@@ -8046,7 +8363,27 @@ class PrivacyPolicyScreen extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _openUrl(BuildContext context, String url) async {
+    final uri = Uri.parse(url);
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open: $url')),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
 }
+
 
 
 // ===== FILE: lib\screens\profile_screen.dart =====
@@ -8056,6 +8393,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../models/post_model.dart';
 import '../widgets/post_card.dart';
+import '../widgets/paginated_list_view.dart';
+import 'partnership_sheet.dart';
 import 'splash_screen.dart';
 import 'settings_screen.dart';
 import 'admin_dashboard_screen.dart';
@@ -8397,8 +8736,34 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  // ============ TAB 1: MY POSTS ============
+  // ============ TAB 1: MY POSTS (20 + Load More) ============
   Widget _postsTab() {
+    // No composite index needed — fetch by userId only, sort in Dart.
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => FirebaseFirestore.instance
+          .collection('posts')
+          .where('userId', isEqualTo: uid)
+          .limit(20),
+      nextPageLoader: (lastDoc) => FirebaseFirestore.instance
+          .collection('posts')
+          .where('userId', isEqualTo: uid)
+          .startAfterDocument(lastDoc)
+          .limit(20),
+      itemBuilder: (context, doc) {
+        final post = PostModel.fromDoc(doc);
+        return PostCard(post: post, onDelete: () {});
+      },
+      emptyBuilder: (context) => _emptyState(
+        icon: Icons.article_outlined,
+        title: 'No posts yet',
+        subtitle: 'Create your first post from the feed!',
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _postsTabOld() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('posts')
@@ -8439,8 +8804,31 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  // ============ TAB 2: MY PARTNERSHIPS ============
+  // ============ TAB 2: MY PARTNERSHIPS (20 + Load More) ============
   Widget _partnershipsTab() {
+    // No composite index needed — filter by userA only.
+    return PaginatedListView(
+      pageSize: 20,
+      firstPageQuery: () => FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userA', isEqualTo: uid)
+          .limit(20),
+      nextPageLoader: (lastDoc) => FirebaseFirestore.instance
+          .collection('partnerships')
+          .where('userA', isEqualTo: uid)
+          .startAfterDocument(lastDoc)
+          .limit(20),
+      itemBuilder: (context, doc) => _partnershipCard(doc),
+      emptyBuilder: (context) => _emptyState(
+        icon: Icons.handshake_outlined,
+        title: 'No partnerships yet',
+        subtitle: 'Partner up with someone to see it here!',
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _partnershipsTabOld() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('partnerships')
@@ -8493,7 +8881,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _partnershipCard(QueryDocumentSnapshot doc) {
+  Widget _partnershipCard(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final userA = data['userA'] as String? ?? '';
     final userB = data['userB'] as String? ?? '';
@@ -8512,7 +8900,19 @@ class _ProfileScreenState extends State<ProfileScreen>
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Padding(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => PartnershipSheet(
+            currentUserId: uid!,
+            otherUserId: otherUserId,
+            otherUsername: otherUsername,
+          ),
+        ),
+        child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -8614,6 +9014,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ],
           ],
+        ),
         ),
       ),
     );
@@ -8767,6 +9168,10 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(_TabBarDelegate oldDelegate) => false;
 }
+
+
+
+
 
 
 
@@ -11115,6 +11520,231 @@ class ThemeController extends ChangeNotifier {
 }
 
 
+// ===== FILE: lib\widgets\paginated_list_view.dart =====
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+/// A reusable paginated list.
+///
+/// - First page loads once via [firstPageQuery]
+/// - Next pages load on "Load More" tap via [nextPageLoader]
+/// - Total docs = sum of all loaded pages
+///
+/// Usage:
+/// ```dart
+/// PaginatedListView<PostModel>(
+///   firstPageQuery: () => FirebaseFirestore.instance
+///       .collection('posts').orderBy('createdAt', descending: true).limit(20),
+///   nextPageLoader: (lastDoc) => FirebaseFirestore.instance
+///       .collection('posts').orderBy('createdAt', descending: true)
+///       .startAfterDocument(lastDoc).limit(20),
+///   itemBuilder: (context, doc) => PostCard(post: PostModel.fromDoc(doc)),
+///   emptyBuilder: (context) => Text('No posts'),
+/// )
+/// ```
+class PaginatedListView<T> extends StatefulWidget {
+  /// Loads the first 20 documents.
+  final Query Function() firstPageQuery;
+
+  /// Given the last loaded doc, loads the next 20.
+  final Query Function(DocumentSnapshot lastDoc) nextPageLoader;
+
+  /// Builds a single row for each doc.
+  final Widget Function(BuildContext, DocumentSnapshot) itemBuilder;
+
+  /// Optional: what to show when the list is empty.
+  final Widget Function(BuildContext)? emptyBuilder;
+
+  /// Optional: what to show while loading the first page.
+  final Widget Function(BuildContext)? loadingBuilder;
+
+  /// Optional: number of items per page (for hasMore check). Default 20.
+  final int pageSize;
+
+  /// Optional: separator builder between rows.
+  final Widget Function(BuildContext, int)? separatorBuilder;
+
+  /// Optional: padding for the list.
+  final EdgeInsetsGeometry padding;
+
+  /// Optional: callback for when list finishes loading (useful for parent state).
+  final void Function(List<DocumentSnapshot>)? onLoaded;
+
+  const PaginatedListView({
+    super.key,
+    required this.firstPageQuery,
+    required this.nextPageLoader,
+    required this.itemBuilder,
+    this.emptyBuilder,
+    this.loadingBuilder,
+    this.separatorBuilder,
+    this.pageSize = 20,
+    this.padding = const EdgeInsets.only(bottom: 20),
+    this.onLoaded,
+  });
+
+  @override
+  State<PaginatedListView<T>> createState() => PaginatedListViewState<T>();
+}
+
+class PaginatedListViewState<T> extends State<PaginatedListView<T>> {
+  final List<DocumentSnapshot> _docs = [];
+  DocumentSnapshot? _lastDoc;
+  bool _initialLoading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFirstPage();
+  }
+
+  Future<void> _loadFirstPage() async {
+    setState(() {
+      _initialLoading = true;
+      _error = null;
+    });
+    try {
+      final snap = await widget.firstPageQuery().get();
+      _docs
+        ..clear()
+        ..addAll(snap.docs);
+      _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : null;
+      _hasMore = snap.docs.length == widget.pageSize;
+      widget.onLoaded?.call(_docs);
+    } catch (e) {
+      _error = '$e';
+    } finally {
+      if (mounted) setState(() => _initialLoading = false);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore || _lastDoc == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      final snap = await widget.nextPageLoader(_lastDoc!).get();
+      _docs.addAll(snap.docs);
+      _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : _lastDoc;
+      _hasMore = snap.docs.length == widget.pageSize;
+      widget.onLoaded?.call(_docs);
+    } catch (e) {
+      _error = '$e';
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  Future<void> refresh() async {
+    await _loadFirstPage();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_initialLoading) {
+      return widget.loadingBuilder?.call(context) ??
+          const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null && _docs.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 50, color: Colors.red),
+              const SizedBox(height: 12),
+              Text('Error: $_error',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loadFirstPage,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_docs.isEmpty) {
+      return widget.emptyBuilder?.call(context) ??
+          const Center(child: Text('No items'));
+    }
+
+    final itemCount = _docs.length + 1; // +1 for the Load More button
+
+    return ListView.separated(
+      padding: widget.padding,
+      itemCount: itemCount,
+      separatorBuilder: (context, index) {
+        if (widget.separatorBuilder != null) {
+          return widget.separatorBuilder!(context, index);
+        }
+        return const SizedBox.shrink();
+      },
+      itemBuilder: (context, index) {
+        if (index == _docs.length) {
+          // Load More button (or end message)
+          return _buildFooter();
+        }
+        return widget.itemBuilder(context, _docs[index]);
+      },
+    );
+  }
+
+  Widget _buildFooter() {
+    if (_loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(
+          child: SizedBox(
+            height: 24,
+            width: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    if (!_hasMore) {
+      return Padding(
+        padding: const EdgeInsets.all(20),
+        child: Center(
+          child: Text(
+            '— End of list —',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: OutlinedButton.icon(
+          onPressed: _loadMore,
+          icon: const Icon(Icons.expand_more, size: 18),
+          label: const Text('Load More'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 24, vertical: 10),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+
 // ===== FILE: lib\widgets\partnership_listener.dart =====
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -12338,10 +12968,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
      case TargetPlatform.windows:
         return windows;
       case TargetPlatform.linux:
@@ -12365,14 +12992,14 @@ class DefaultFirebaseOptions {
     storageBucket: 'partnerup-2f6a8.firebasestorage.app',
     measurementId: 'G-6QNS770NHT',
   );
+
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyAACXi8-oq7JECy4JPwZXRSCqaInUnFUyg',
-    appId: '1:15564026221:android:d9ba1b2a9835db0c22aa64',
+    appId: '1:15564026221:android:2e38e2b08570f0e522aa64',
     messagingSenderId: '15564026221',
     projectId: 'partnerup-2f6a8',
     storageBucket: 'partnerup-2f6a8.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyCzFN1uBDeJD5wOgFEKlLlzuxYfuhCt-Ak',
     appId: '1:15564026221:ios:7685d81ff84edeb622aa64',
@@ -12390,6 +13017,14 @@ class DefaultFirebaseOptions {
     authDomain: 'partnerup-2f6a8.firebaseapp.com',
     storageBucket: 'partnerup-2f6a8.firebasestorage.app',
     measurementId: 'G-67VWWDQ3SF',
+  );
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyCzFN1uBDeJD5wOgFEKlLlzuxYfuhCt-Ak',
+    appId: '1:15564026221:ios:7685d81ff84edeb622aa64',
+    messagingSenderId: '15564026221',
+    projectId: 'partnerup-2f6a8',
+    storageBucket: 'partnerup-2f6a8.firebasestorage.app',
+    iosBundleId: 'com.example.partnerupApp',
   );
 }
 

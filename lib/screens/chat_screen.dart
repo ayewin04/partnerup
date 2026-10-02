@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../services/partnership_service.dart';
 import 'report_sheet.dart';
+import 'partnership_sheet.dart';
 import '../services/block_service.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -83,7 +84,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final messagesRef = FirebaseFirestore.instance
           .collection('chats').doc(_chatId)
           .collection('messages');
-      final all = await messagesRef.limit(200).get();
+      final all = await messagesRef.limit(50).get();
       final toUpdate = all.docs.where((d) {
         final data = d.data();
         return data['senderId'] != _currentUserId &&
@@ -226,76 +227,159 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (ctx) {
         String? error;
         return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
+          builder: (ctx, setDialogState) => Dialog(
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16)),
-            title: const Text('Propose Partnership?'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('You are about to send a partnership request to '
-                  '${widget.otherUsername}.'),
-                const SizedBox(height: 16),
-                const Text(
-                  'What is this partnership for?',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 20, vertical: 24),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+                maxWidth: 500,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ---- SCROLLABLE CONTENT ----
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Title
+                          const Text('Propose Partnership?',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            )),
+                          const SizedBox(height: 12),
+                          Text(
+                            'You are about to send a partnership request to '
+                            '${widget.otherUsername}.',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Label
+                          const Text(
+                            'What is this partnership for?',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+
+                          // Text field
+                          TextField(
+                            controller: reasonController,
+                            maxLength: 200,
+                            maxLines: 3,
+                            minLines: 2,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              hintText: 'e.g. Tennis at 6 PM tomorrow',
+                              errorText: error,
+                              counterText: '',
+                              isDense: true,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // Warning
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.orange[50],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: Colors.orange[200]!),
+                            ),
+                            child: const Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.info_outline,
+                                  size: 16, color: Colors.orange),
+                                SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'If both accept, you enter a binding '
+                                    'agreement. This reason will be shown '
+                                    'if a report is made.',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: reasonController,
-                  maxLength: 200,
-                  maxLines: 3,
-                  minLines: 1,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    hintText: 'e.g. Tennis at 6 PM tomorrow',
-                    errorText: error,
-                    counterText: '',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10)),
+
+                  // ---- FIXED ACTION BUTTONS ----
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            ),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              final reason =
+                                  reasonController.text.trim();
+                              if (reason.isEmpty) {
+                                setDialogState(() =>
+                                  error = 'Please enter a reason');
+                                return;
+                              }
+                              if (reason.length < 3) {
+                                setDialogState(() => error =
+                                  'Reason must be at least 3 characters');
+                                return;
+                              }
+                              Navigator.pop(ctx, {
+                                'reason': reason,
+                                'postId': widget.postId ?? '',
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green[600],
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            ),
+                            child: const Text('Send Request',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  '⚠️ If both accept, you enter a binding agreement. '
-                  'This reason will be shown if a report is made.',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-              ],
+                ],
+              ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final reason = reasonController.text.trim();
-                  if (reason.isEmpty) {
-                    setDialogState(() =>
-                      error = 'Please enter a reason');
-                    return;
-                  }
-                  if (reason.length < 3) {
-                    setDialogState(() =>
-                      error = 'Reason must be at least 3 characters');
-                    return;
-                  }
-                  Navigator.pop(ctx, {
-                    'reason': reason,
-                    'postId': widget.postId ?? '',
-                  });
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green[600],
-                  foregroundColor: Colors.white),
-                child: const Text('Send Request'),
-              ),
-            ],
           ),
         );
       },
@@ -337,6 +421,19 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _showPartnerships() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PartnershipSheet(
+        currentUserId: _currentUserId,
+        otherUserId: widget.otherUserId,
+        otherUsername: widget.otherUsername,
+      ),
+    );
+  }
+
   String _timeAgo(Timestamp? ts) {
     if (ts == null) return '';
     return DateFormat('HH:mm').format(ts.toDate());
@@ -371,8 +468,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 40,  // tighter back button area
-        titleSpacing: 0,    // no extra gap
+        toolbarHeight: 60,   // slightly taller for 2 lines
+        leadingWidth: 40,
+        titleSpacing: 0,
         title: Row(
           children: [
             CircleAvatar(
@@ -394,14 +492,33 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(widget.otherUsername,
+                  // Username
+                  Text(
+                    widget.otherUsername,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 15)),
-                  Flexible(
-                    child: PartnershipCountLabel(
-                      userA: _currentUserId,
-                      userB: widget.otherUserId,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      height: 1.1,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  // Partnership count — single line, small
+                  GestureDetector(
+                    onTap: _showPartnerships,
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      height: 14,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: PartnershipCountLabel(
+                          userA: _currentUserId,
+                          userB: widget.otherUserId,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -410,6 +527,12 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          // View partnerships history
+          IconButton(
+            icon: const Icon(Icons.history, size: 20),
+            tooltip: 'Partnership history',
+            onPressed: () => _showPartnerships(),
+          ),
           // Report button (only visible if partnered before)
           _ReportMenuButton(
             currentUserId: _currentUserId,
@@ -498,6 +621,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   .collection('chats').doc(_chatId)
                   .collection('messages')
                   .orderBy('timestamp', descending: false)
+                  .limitToLast(50)
                   .snapshots(),
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
@@ -808,7 +932,12 @@ class PartnershipCountLabel extends StatelessWidget {
               : '🤝 $count partnerships',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 11, color: Colors.white70),
+          softWrap: false,
+          style: const TextStyle(
+            fontSize: 10,
+            color: Colors.white70,
+            height: 1,
+          ),
         );
       },
     );
@@ -948,6 +1077,13 @@ class _ReportMenuButton extends StatelessWidget {
     );
   }
 }
+
+
+
+
+
+
+
 
 
 
