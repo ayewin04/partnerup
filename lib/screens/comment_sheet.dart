@@ -13,9 +13,100 @@ class CommentSheet extends StatefulWidget {
 }
 
 class _CommentSheetState extends State<CommentSheet> {
+  static const int _pageSize = 50;
+
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   bool _sending = false;
+
+  // Pagination
+  final List<DocumentSnapshot> _comments = [];
+  DocumentSnapshot? _lastDoc;
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFirstPage();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadFirstPage() async {
+    setState(() {
+      _loading = true;
+      _hasMore = true;
+      _comments.clear();
+      _lastDoc = null;
+    });
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('posts').doc(widget.postId)
+          .collection('comments')
+          .orderBy('createdAt', descending: false)
+          .limit(_pageSize)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _comments.addAll(snap.docs);
+        _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : null;
+        _hasMore = snap.docs.length == _pageSize;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('[Comment] load error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore || _lastDoc == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('posts').doc(widget.postId)
+          .collection('comments')
+          .orderBy('createdAt', descending: false)
+          .startAfterDocument(_lastDoc!)
+          .limit(_pageSize)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _comments.addAll(snap.docs);
+        _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : _lastDoc;
+        _hasMore = snap.docs.length == _pageSize;
+      });
+    } catch (e) {
+      debugPrint('[Comment] loadMore error: $e');
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  /// Called after posting a new comment — prepends locally.
+  void _appendComment(DocumentSnapshot doc) {
+    if (!mounted) return;
+    setState(() => _comments.add(doc));
+    // Scroll to bottom
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
 
   Future<void> _send() async {
     final text = _controller.text.trim();
@@ -102,6 +193,14 @@ class _CommentSheetState extends State<CommentSheet> {
 
       await batch.commit();
 
+      // Fetch the just-created comment to append locally
+      try {
+        final newSnap = await commentRef.get();
+        _appendComment(newSnap);
+      } catch (e) {
+        debugPrint('[Comment] fetch new comment error: $e');
+      }
+
       _controller.clear();
       FocusScope.of(context).unfocus();
     } catch (e) {
@@ -148,78 +247,79 @@ class _CommentSheetState extends State<CommentSheet> {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const Divider(),
 
-          // Comments list
+          // Comments list (paginated — 50 per page)
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('posts').doc(widget.postId)
-                  .collection('comments')
-                  .orderBy('createdAt', descending: false)
-                  .snapshots(),
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (!snap.hasData || snap.data!.docs.isEmpty) {
-                  return const Center(
-                    child: Text('No comments yet. Be the first!',
-                      style: TextStyle(color: Colors.grey)));
-                }
-                final comments = snap.data!.docs
-                    .map((d) => CommentModel.fromDoc(d)).toList();
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: comments.length,
-                  itemBuilder: (_, i) {
-                    final c = comments[i];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          CircleAvatar(
-                            radius: 16,
-                            backgroundColor: Colors.blue[100],
-                            child: Text(
-                              c.username.isNotEmpty
-                                ? c.username[0].toUpperCase() : '?',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _comments.isEmpty
+                    ? const Center(
+                        child: Text('No comments yet. Be the first!',
+                          style: TextStyle(color: Colors.grey)))
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(12),
+                        itemCount: _comments.length + (_hasMore ? 1 : 0),
+                        itemBuilder: (_, i) {
+                          if (i == _comments.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: SizedBox(
+                                  height: 20, width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                                ),
+                              ),
+                            );
+                          }
+                          final c =
+                              CommentModel.fromDoc(_comments[i]);
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(c.username,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 13)),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(_timeAgo(c.createdAt),
-                                      style: const TextStyle(
-                                        fontSize: 11, color: Colors.grey)),
-                                  ],
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: Colors.blue[100],
+                                  child: Text(
+                                    c.username.isNotEmpty
+                                      ? c.username[0].toUpperCase() : '?',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
                                 ),
-                                const SizedBox(height: 2),
-                                Text(c.text, style: const TextStyle(fontSize: 14)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(c.username,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 13)),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(_timeAgo(c.createdAt),
+                                            style: const TextStyle(
+                                              fontSize: 11, color: Colors.grey)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(c.text,
+                                        style: const TextStyle(fontSize: 14)),
+                                    ],
+                                  ),
+                                ),
                               ],
                             ),
-                          ),
-                        ],
+                          );
+                        },
                       ),
-                    );
-                  },
-                );
-              },
-            ),
           ),
 
           // Input
@@ -264,6 +364,9 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
+
+
 
 
 

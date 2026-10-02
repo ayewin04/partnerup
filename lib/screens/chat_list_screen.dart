@@ -13,7 +13,96 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _currentUserId = FirebaseAuth.instance.currentUser!.uid;
-  int _visibleCount = 20;
+  static const int _pageSize = 20;
+
+  // Merged chat list — one-shot loaded, paginated
+  final List<QueryDocumentSnapshot> _chats = [];
+  DocumentSnapshot? _lastDoc;  // last doc after global sort
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPage(reset: true);
+  }
+
+  /// Loads one page of chats. We fetch 2× (pageSize × 2) from each side
+  /// to account for merges + sort across userA/userB, then keep the top
+  /// `_pageSize` uniques. The cursor is stored on the merged/sorted list.
+  Future<void> _loadPage({required bool reset}) async {
+    if (reset) {
+      setState(() {
+        _loading = true;
+        _chats.clear();
+        _lastDoc = null;
+        _hasMore = true;
+      });
+    } else {
+      if (_loadingMore || !_hasMore) return;
+      setState(() => _loadingMore = true);
+    }
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final fetchLimit = _pageSize * 2;
+
+      final futures = <Future<QuerySnapshot>>[
+        db.collection('chats')
+            .where('userA', isEqualTo: _currentUserId)
+            .orderBy('lastMessageTime', descending: true)
+            .limit(fetchLimit)
+            .get(),
+        db.collection('chats')
+            .where('userB', isEqualTo: _currentUserId)
+            .orderBy('lastMessageTime', descending: true)
+            .limit(fetchLimit)
+            .get(),
+      ];
+
+      final results = await Future.wait(futures);
+
+      // Merge + dedupe
+      final seen = <String>{};
+      final merged = <QueryDocumentSnapshot>[];
+      for (final snap in results) {
+        for (final d in snap.docs) {
+          if (seen.add(d.id)) merged.add(d);
+        }
+      }
+
+      // Sort newest-first
+      merged.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['lastMessageTime']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['lastMessageTime']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      // Drop anything already loaded (by id)
+      final existing = _chats.map((d) => d.id).toSet();
+      final fresh = merged.where((d) => !existing.contains(d.id)).toList();
+
+      final page = fresh.take(_pageSize).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _chats.addAll(page);
+        _hasMore = fresh.length >= _pageSize;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('[ChatList] load error: $e');
+      if (mounted) setState(() => _loading = false);
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -21,41 +110,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
       appBar: AppBar(
         title: const Text('Chats',
           style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: () => _loadPage(reset: true),
+          ),
+        ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('chats')
-            .where('userA', isEqualTo: _currentUserId)
-            .snapshots(),
-        builder: (context, snapA) {
-          return StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('chats')
-                .where('userB', isEqualTo: _currentUserId)
-                .snapshots(),
-            builder: (context, snapB) {
-              final allDocs = <QueryDocumentSnapshot>[];
-              if (snapA.hasData) allDocs.addAll(snapA.data!.docs);
-              if (snapB.hasData) allDocs.addAll(snapB.data!.docs);
-
-              final seen = <String>{};
-              final unique = <QueryDocumentSnapshot>[];
-              for (final d in allDocs) {
-                if (seen.add(d.id)) unique.add(d);
-              }
-
-              // Sort by lastMessageTime desc
-              unique.sort((a, b) {
-                final ta = (a.data() as Map<String, dynamic>)['lastMessageTime'] as Timestamp?;
-                final tb = (b.data() as Map<String, dynamic>)['lastMessageTime'] as Timestamp?;
-                if (ta == null && tb == null) return 0;
-                if (ta == null) return 1;
-                if (tb == null) return -1;
-                return tb.compareTo(ta);
-              });
-
-              if (unique.isEmpty) {
-                return const Center(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _chats.isEmpty
+              ? const Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -69,42 +135,45 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         style: TextStyle(fontSize: 13, color: Colors.grey)),
                     ],
                   ),
-                );
-              }
-
-              // Show only first 20 + Load More
-              final visible = unique.take(_visibleCount).toList();
-              final hasMore = unique.length > _visibleCount;
-
-              return ListView.separated(
-                itemCount: visible.length + (hasMore ? 1 : 0),
-                separatorBuilder: (_, __) =>
-                  Divider(height: 1, color: Theme.of(context).dividerColor),
-                itemBuilder: (context, i) {
-                  if (i == visible.length) {
-                    return Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Center(
-                        child: OutlinedButton.icon(
-                          onPressed: () => setState(() {
-                            _visibleCount += 20;
-                          }),
-                          icon: const Icon(Icons.expand_more, size: 18),
-                          label: const Text('Load More'),
-                        ),
-                      ),
-                    );
-                  }
-                  return _ChatRow(
-                    chatDoc: visible[i],
-                    currentUserId: _currentUserId,
-                  );
-                },
-              );
-            },
-          );
-        },
-      ),
+                )
+              : RefreshIndicator(
+                  onRefresh: () => _loadPage(reset: true),
+                  child: ListView.separated(
+                    itemCount: _chats.length + (_hasMore ? 1 : 0),
+                    separatorBuilder: (_, __) => Divider(
+                        height: 1, color: Theme.of(context).dividerColor),
+                    itemBuilder: (context, i) {
+                      if (i == _chats.length) {
+                        if (_loadingMore) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(
+                              child: SizedBox(
+                                height: 20, width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                              ),
+                            ),
+                          );
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Center(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _loadPage(reset: false),
+                              icon: const Icon(Icons.expand_more, size: 18),
+                              label: const Text('Load More'),
+                            ),
+                          ),
+                        );
+                      }
+                      return _ChatRow(
+                        chatDoc: _chats[i],
+                        currentUserId: _currentUserId,
+                      );
+                    },
+                  ),
+                ),
     );
   }
 }
@@ -282,6 +351,7 @@ class _ChatRow extends StatelessWidget {
     return DateFormat('MMM d').format(d);
   }
 }
+
 
 
 

@@ -171,10 +171,13 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
   }
 
   Future<void> _loadRandom(bool reset) async {
+    // Fetch a small pool (4× page size) instead of 200.
+    // Shuffle locally, take pageSize. Much cheaper than 200 reads.
+    final poolSize = pageSize * 4;
     final snap = await FirebaseFirestore.instance
         .collection('posts')
         .orderBy('createdAt', descending: true)
-        .limit(200)
+        .limit(poolSize)
         .get();
 
     final all = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
@@ -190,7 +193,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
       } else {
         _posts.addAll(slice);
       }
-      _hasMore = fresh.length > pageSize;
+      _hasMore = slice.length == pageSize && all.length >= poolSize;
     });
   }
 
@@ -827,6 +830,7 @@ class _ReportBanner extends StatelessWidget {
     );
   }
 }
+
 
 
 

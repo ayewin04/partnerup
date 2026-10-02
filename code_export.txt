@@ -3748,7 +3748,96 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _currentUserId = FirebaseAuth.instance.currentUser!.uid;
-  int _visibleCount = 20;
+  static const int _pageSize = 20;
+
+  // Merged chat list — one-shot loaded, paginated
+  final List<QueryDocumentSnapshot> _chats = [];
+  DocumentSnapshot? _lastDoc;  // last doc after global sort
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPage(reset: true);
+  }
+
+  /// Loads one page of chats. We fetch 2× (pageSize × 2) from each side
+  /// to account for merges + sort across userA/userB, then keep the top
+  /// `_pageSize` uniques. The cursor is stored on the merged/sorted list.
+  Future<void> _loadPage({required bool reset}) async {
+    if (reset) {
+      setState(() {
+        _loading = true;
+        _chats.clear();
+        _lastDoc = null;
+        _hasMore = true;
+      });
+    } else {
+      if (_loadingMore || !_hasMore) return;
+      setState(() => _loadingMore = true);
+    }
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final fetchLimit = _pageSize * 2;
+
+      final futures = <Future<QuerySnapshot>>[
+        db.collection('chats')
+            .where('userA', isEqualTo: _currentUserId)
+            .orderBy('lastMessageTime', descending: true)
+            .limit(fetchLimit)
+            .get(),
+        db.collection('chats')
+            .where('userB', isEqualTo: _currentUserId)
+            .orderBy('lastMessageTime', descending: true)
+            .limit(fetchLimit)
+            .get(),
+      ];
+
+      final results = await Future.wait(futures);
+
+      // Merge + dedupe
+      final seen = <String>{};
+      final merged = <QueryDocumentSnapshot>[];
+      for (final snap in results) {
+        for (final d in snap.docs) {
+          if (seen.add(d.id)) merged.add(d);
+        }
+      }
+
+      // Sort newest-first
+      merged.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['lastMessageTime']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['lastMessageTime']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      // Drop anything already loaded (by id)
+      final existing = _chats.map((d) => d.id).toSet();
+      final fresh = merged.where((d) => !existing.contains(d.id)).toList();
+
+      final page = fresh.take(_pageSize).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _chats.addAll(page);
+        _hasMore = fresh.length >= _pageSize;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('[ChatList] load error: $e');
+      if (mounted) setState(() => _loading = false);
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3756,41 +3845,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
       appBar: AppBar(
         title: const Text('Chats',
           style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: () => _loadPage(reset: true),
+          ),
+        ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('chats')
-            .where('userA', isEqualTo: _currentUserId)
-            .snapshots(),
-        builder: (context, snapA) {
-          return StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('chats')
-                .where('userB', isEqualTo: _currentUserId)
-                .snapshots(),
-            builder: (context, snapB) {
-              final allDocs = <QueryDocumentSnapshot>[];
-              if (snapA.hasData) allDocs.addAll(snapA.data!.docs);
-              if (snapB.hasData) allDocs.addAll(snapB.data!.docs);
-
-              final seen = <String>{};
-              final unique = <QueryDocumentSnapshot>[];
-              for (final d in allDocs) {
-                if (seen.add(d.id)) unique.add(d);
-              }
-
-              // Sort by lastMessageTime desc
-              unique.sort((a, b) {
-                final ta = (a.data() as Map<String, dynamic>)['lastMessageTime'] as Timestamp?;
-                final tb = (b.data() as Map<String, dynamic>)['lastMessageTime'] as Timestamp?;
-                if (ta == null && tb == null) return 0;
-                if (ta == null) return 1;
-                if (tb == null) return -1;
-                return tb.compareTo(ta);
-              });
-
-              if (unique.isEmpty) {
-                return const Center(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _chats.isEmpty
+              ? const Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -3804,42 +3870,45 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         style: TextStyle(fontSize: 13, color: Colors.grey)),
                     ],
                   ),
-                );
-              }
-
-              // Show only first 20 + Load More
-              final visible = unique.take(_visibleCount).toList();
-              final hasMore = unique.length > _visibleCount;
-
-              return ListView.separated(
-                itemCount: visible.length + (hasMore ? 1 : 0),
-                separatorBuilder: (_, __) =>
-                  Divider(height: 1, color: Theme.of(context).dividerColor),
-                itemBuilder: (context, i) {
-                  if (i == visible.length) {
-                    return Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Center(
-                        child: OutlinedButton.icon(
-                          onPressed: () => setState(() {
-                            _visibleCount += 20;
-                          }),
-                          icon: const Icon(Icons.expand_more, size: 18),
-                          label: const Text('Load More'),
-                        ),
-                      ),
-                    );
-                  }
-                  return _ChatRow(
-                    chatDoc: visible[i],
-                    currentUserId: _currentUserId,
-                  );
-                },
-              );
-            },
-          );
-        },
-      ),
+                )
+              : RefreshIndicator(
+                  onRefresh: () => _loadPage(reset: true),
+                  child: ListView.separated(
+                    itemCount: _chats.length + (_hasMore ? 1 : 0),
+                    separatorBuilder: (_, __) => Divider(
+                        height: 1, color: Theme.of(context).dividerColor),
+                    itemBuilder: (context, i) {
+                      if (i == _chats.length) {
+                        if (_loadingMore) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(
+                              child: SizedBox(
+                                height: 20, width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                              ),
+                            ),
+                          );
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Center(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _loadPage(reset: false),
+                              icon: const Icon(Icons.expand_more, size: 18),
+                              label: const Text('Load More'),
+                            ),
+                          ),
+                        );
+                      }
+                      return _ChatRow(
+                        chatDoc: _chats[i],
+                        currentUserId: _currentUserId,
+                      );
+                    },
+                  ),
+                ),
     );
   }
 }
@@ -4017,6 +4086,7 @@ class _ChatRow extends StatelessWidget {
     return DateFormat('MMM d').format(d);
   }
 }
+
 
 
 
@@ -5479,9 +5549,100 @@ class CommentSheet extends StatefulWidget {
 }
 
 class _CommentSheetState extends State<CommentSheet> {
+  static const int _pageSize = 50;
+
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   bool _sending = false;
+
+  // Pagination
+  final List<DocumentSnapshot> _comments = [];
+  DocumentSnapshot? _lastDoc;
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFirstPage();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadFirstPage() async {
+    setState(() {
+      _loading = true;
+      _hasMore = true;
+      _comments.clear();
+      _lastDoc = null;
+    });
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('posts').doc(widget.postId)
+          .collection('comments')
+          .orderBy('createdAt', descending: false)
+          .limit(_pageSize)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _comments.addAll(snap.docs);
+        _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : null;
+        _hasMore = snap.docs.length == _pageSize;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('[Comment] load error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore || _lastDoc == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('posts').doc(widget.postId)
+          .collection('comments')
+          .orderBy('createdAt', descending: false)
+          .startAfterDocument(_lastDoc!)
+          .limit(_pageSize)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _comments.addAll(snap.docs);
+        _lastDoc = snap.docs.isNotEmpty ? snap.docs.last : _lastDoc;
+        _hasMore = snap.docs.length == _pageSize;
+      });
+    } catch (e) {
+      debugPrint('[Comment] loadMore error: $e');
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  /// Called after posting a new comment — prepends locally.
+  void _appendComment(DocumentSnapshot doc) {
+    if (!mounted) return;
+    setState(() => _comments.add(doc));
+    // Scroll to bottom
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
 
   Future<void> _send() async {
     final text = _controller.text.trim();
@@ -5568,6 +5729,14 @@ class _CommentSheetState extends State<CommentSheet> {
 
       await batch.commit();
 
+      // Fetch the just-created comment to append locally
+      try {
+        final newSnap = await commentRef.get();
+        _appendComment(newSnap);
+      } catch (e) {
+        debugPrint('[Comment] fetch new comment error: $e');
+      }
+
       _controller.clear();
       FocusScope.of(context).unfocus();
     } catch (e) {
@@ -5614,78 +5783,79 @@ class _CommentSheetState extends State<CommentSheet> {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const Divider(),
 
-          // Comments list
+          // Comments list (paginated — 50 per page)
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('posts').doc(widget.postId)
-                  .collection('comments')
-                  .orderBy('createdAt', descending: false)
-                  .snapshots(),
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (!snap.hasData || snap.data!.docs.isEmpty) {
-                  return const Center(
-                    child: Text('No comments yet. Be the first!',
-                      style: TextStyle(color: Colors.grey)));
-                }
-                final comments = snap.data!.docs
-                    .map((d) => CommentModel.fromDoc(d)).toList();
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: comments.length,
-                  itemBuilder: (_, i) {
-                    final c = comments[i];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          CircleAvatar(
-                            radius: 16,
-                            backgroundColor: Colors.blue[100],
-                            child: Text(
-                              c.username.isNotEmpty
-                                ? c.username[0].toUpperCase() : '?',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _comments.isEmpty
+                    ? const Center(
+                        child: Text('No comments yet. Be the first!',
+                          style: TextStyle(color: Colors.grey)))
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(12),
+                        itemCount: _comments.length + (_hasMore ? 1 : 0),
+                        itemBuilder: (_, i) {
+                          if (i == _comments.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: SizedBox(
+                                  height: 20, width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                                ),
+                              ),
+                            );
+                          }
+                          final c =
+                              CommentModel.fromDoc(_comments[i]);
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(c.username,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 13)),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(_timeAgo(c.createdAt),
-                                      style: const TextStyle(
-                                        fontSize: 11, color: Colors.grey)),
-                                  ],
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: Colors.blue[100],
+                                  child: Text(
+                                    c.username.isNotEmpty
+                                      ? c.username[0].toUpperCase() : '?',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
                                 ),
-                                const SizedBox(height: 2),
-                                Text(c.text, style: const TextStyle(fontSize: 14)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(c.username,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 13)),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(_timeAgo(c.createdAt),
+                                            style: const TextStyle(
+                                              fontSize: 11, color: Colors.grey)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(c.text,
+                                        style: const TextStyle(fontSize: 14)),
+                                    ],
+                                  ),
+                                ),
                               ],
                             ),
-                          ),
-                        ],
+                          );
+                        },
                       ),
-                    );
-                  },
-                );
-              },
-            ),
           ),
 
           // Input
@@ -5730,6 +5900,9 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
+
+
 
 
 
@@ -7104,10 +7277,13 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
   }
 
   Future<void> _loadRandom(bool reset) async {
+    // Fetch a small pool (4× page size) instead of 200.
+    // Shuffle locally, take pageSize. Much cheaper than 200 reads.
+    final poolSize = pageSize * 4;
     final snap = await FirebaseFirestore.instance
         .collection('posts')
         .orderBy('createdAt', descending: true)
-        .limit(200)
+        .limit(poolSize)
         .get();
 
     final all = snap.docs.map((d) => PostModel.fromDoc(d)).toList();
@@ -7123,7 +7299,7 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
       } else {
         _posts.addAll(slice);
       }
-      _hasMore = fresh.length > pageSize;
+      _hasMore = slice.length == pageSize && all.length >= poolSize;
     });
   }
 
@@ -7760,6 +7936,7 @@ class _ReportBanner extends StatelessWidget {
     );
   }
 }
+
 
 
 
@@ -13266,15 +13443,27 @@ class _PostCardState extends State<PostCard> {
   }
 
   /// ONE-TIME check: did I like this post?
-  /// Replaces the permanent .snapshots() listener that used to run for every card.
+  /// Cache-first — only reads Firestore if not cached locally.
   Future<void> _checkLikeStatus() async {
     if (currentUserId == null) return;
     try {
+      // LAYER 1: local SharedPreferences cache
+      final prefs = await SharedPreferences.getInstance();
+      final cacheKey = 'liked_${widget.post.id}_$currentUserId';
+      final cached = prefs.getBool(cacheKey);
+      if (cached != null) {
+        if (mounted) setState(() => _isLiked = cached);
+        debugPrint('[Like] cache hit for ${widget.post.id}');
+        return;
+      }
+
+      // LAYER 2: Firestore (first time only)
       final doc = await FirebaseFirestore.instance
           .collection('posts').doc(widget.post.id)
           .collection('likes').doc(currentUserId)
           .get();
       if (mounted) setState(() => _isLiked = doc.exists);
+      await prefs.setBool(cacheKey, doc.exists);
     } catch (e) {
       debugPrint('[Like] check error: $e');
     }
@@ -13353,10 +13542,28 @@ class _PostCardState extends State<PostCard> {
           }
         }
       }
+      // Persist the final like state to local cache
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(
+          'liked_${widget.post.id}_$currentUserId',
+          _isLiked,
+        );
+      } catch (e) {
+        debugPrint('[Like] cache write error: $e');
+      }
     } catch (e) {
       // Revert optimistic UI on error
       debugPrint('[Like] error: $e');
       if (mounted) setState(() => _isLiked = wasLiked);
+      // Also revert the cache
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(
+          'liked_${widget.post.id}_$currentUserId',
+          wasLiked,
+        );
+      } catch (_) {}
     }
     if (mounted) setState(() => _likeLoading = false);
   }
@@ -13719,6 +13926,8 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
+
+
 
 
 

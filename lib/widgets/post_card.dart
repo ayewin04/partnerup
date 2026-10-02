@@ -96,15 +96,27 @@ class _PostCardState extends State<PostCard> {
   }
 
   /// ONE-TIME check: did I like this post?
-  /// Replaces the permanent .snapshots() listener that used to run for every card.
+  /// Cache-first — only reads Firestore if not cached locally.
   Future<void> _checkLikeStatus() async {
     if (currentUserId == null) return;
     try {
+      // LAYER 1: local SharedPreferences cache
+      final prefs = await SharedPreferences.getInstance();
+      final cacheKey = 'liked_${widget.post.id}_$currentUserId';
+      final cached = prefs.getBool(cacheKey);
+      if (cached != null) {
+        if (mounted) setState(() => _isLiked = cached);
+        debugPrint('[Like] cache hit for ${widget.post.id}');
+        return;
+      }
+
+      // LAYER 2: Firestore (first time only)
       final doc = await FirebaseFirestore.instance
           .collection('posts').doc(widget.post.id)
           .collection('likes').doc(currentUserId)
           .get();
       if (mounted) setState(() => _isLiked = doc.exists);
+      await prefs.setBool(cacheKey, doc.exists);
     } catch (e) {
       debugPrint('[Like] check error: $e');
     }
@@ -183,10 +195,28 @@ class _PostCardState extends State<PostCard> {
           }
         }
       }
+      // Persist the final like state to local cache
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(
+          'liked_${widget.post.id}_$currentUserId',
+          _isLiked,
+        );
+      } catch (e) {
+        debugPrint('[Like] cache write error: $e');
+      }
     } catch (e) {
       // Revert optimistic UI on error
       debugPrint('[Like] error: $e');
       if (mounted) setState(() => _isLiked = wasLiked);
+      // Also revert the cache
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(
+          'liked_${widget.post.id}_$currentUserId',
+          wasLiked,
+        );
+      } catch (_) {}
     }
     if (mounted) setState(() => _likeLoading = false);
   }
@@ -549,6 +579,8 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
+
+
 
 
 
