@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+﻿$dart = @"
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
@@ -69,7 +70,7 @@ class _CommentSheetState extends State<CommentSheet> {
         _loading = false;
       });
     } catch (e) {
-      debugPrint('[Comment] load error: $e');
+      debugPrint('[Comment] load error: `$e');
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -92,7 +93,7 @@ class _CommentSheetState extends State<CommentSheet> {
         _hasMore = snap.docs.length == _pageSize;
       });
     } catch (e) {
-      debugPrint('[Comment] loadMore error: $e');
+      debugPrint('[Comment] loadMore error: `$e');
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
@@ -160,8 +161,8 @@ class _CommentSheetState extends State<CommentSheet> {
             .collection('notifications').doc();
         batch.set(notifRef, {
           'type': 'comment',
-          'title': '$username commented',
-          'body': text.length > 80 ? '${text.substring(0, 80)}...' : text,
+          'title': '`$username commented',
+          'body': text.length > 80 ? '`${text.substring(0, 80)}...' : text,
           'data': {'postId': widget.postId},
           'isRead': false,
           'createdAt': FieldValue.serverTimestamp(),
@@ -188,13 +189,13 @@ class _CommentSheetState extends State<CommentSheet> {
           });
         }
       } catch (e) {
-        debugPrint('[Comment] fetch new comment error: $e');
+        debugPrint('[Comment] fetch new comment error: `$e');
       }
 
       _controller.clear();
       FocusScope.of(context).unfocus();
     } catch (e) {
-      _showError('Failed to comment: $e');
+      _showError('Failed to comment: `$e');
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -251,7 +252,7 @@ class _CommentSheetState extends State<CommentSheet> {
         ),
       );
     } catch (e) {
-      _showError('Failed to update: $e');
+      _showError('Failed to update: `$e');
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -305,7 +306,7 @@ class _CommentSheetState extends State<CommentSheet> {
         );
       }
     } catch (e) {
-      _showError('Failed to delete: $e');
+      _showError('Failed to delete: `$e');
     }
   }
 
@@ -371,9 +372,9 @@ class _CommentSheetState extends State<CommentSheet> {
 
   String _timeAgo(Timestamp ts) {
     final diff = DateTime.now().difference(ts.toDate());
-    if (diff.inSeconds < 60) return '${diff.inSeconds}s';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
-    if (diff.inHours < 24) return '${diff.inHours}h';
+    if (diff.inSeconds < 60) return '`${diff.inSeconds}s';
+    if (diff.inMinutes < 60) return '`${diff.inMinutes}m';
+    if (diff.inHours < 24) return '`${diff.inHours}h';
     return DateFormat('MMM d').format(ts.toDate());
   }
 
@@ -612,3 +613,9 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+"@
+
+Set-Content -Path 'lib\screens\comment_sheet.dart' -Value $dart -Encoding UTF8 -NoNewline
+
+Write-Host 'comment_sheet.dart overwritten' -ForegroundColor Green
+Write-Host 'Now paste the rules from the previous message into Firebase Console -> Firestore -> Rules' -ForegroundColor Yellow
