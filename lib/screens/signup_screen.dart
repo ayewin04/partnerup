@@ -72,54 +72,79 @@ class _SignupScreenState extends State<SignupScreen> {
     debugPrint('=== SIGNUP START ===');
 
     try {
-      // STEP 1: Check if username exists
-      debugPrint('STEP 1: Checking username...');
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+      final username = _usernameController.text.trim();
+
+      // ============================================================
+      // STEP 1: Create the Firebase Auth user FIRST.
+      //         This gives us a valid request.auth for Firestore.
+      // ============================================================
+      debugPrint('STEP 1: Creating Firebase Auth user...');
+      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      final uid = cred.user!.uid;
+      debugPrint('STEP 1 OK: UID = $uid');
+
+      // ⭐ Persist username on the Auth user so it survives app restarts
+      //    and can never be stale/'Unknown'.
+      try {
+        await cred.user!.updateDisplayName(username);
+        debugPrint('STEP 1b OK: displayName set to $username');
+      } catch (e) {
+        debugPrint('STEP 1b WARN: displayName update failed: $e');
+      }
+
+      // ============================================================
+      // STEP 2: Now that we're signed in, check username availability.
+      // ============================================================
+      debugPrint('STEP 2: Checking username availability...');
       final usernameQuery = await FirebaseFirestore.instance
           .collection('users')
-          .where('username', isEqualTo: _usernameController.text.trim())
+          .where('username', isEqualTo: username)
           .limit(1)
           .get();
 
       if (usernameQuery.docs.isNotEmpty) {
-        debugPrint('STEP 1 FAILED: Username taken');
+        debugPrint('STEP 2 FAILED: Username taken');
+        // Roll back: delete the auth account we just created
+        try { await cred.user!.delete(); } catch (_) {}
         setState(() {
           _error = 'Username already taken. Try another.';
           _loading = false;
         });
         return;
       }
-      debugPrint('STEP 1 OK');
+      debugPrint('STEP 2 OK');
 
-      // STEP 2: Create auth user
-      debugPrint('STEP 2: Creating Firebase Auth user...');
-      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
-      debugPrint('STEP 2 OK: UID = ${cred.user!.uid}');
-
-      // STEP 3: Write to Firestore
-      debugPrint('STEP 3: Writing to Firestore...');
-      await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
-        'username': _usernameController.text.trim(),
-        'usernameLower': _usernameController.text.trim().toLowerCase(),
-        'email': _emailController.text.trim(),
+      // ============================================================
+      // STEP 3: Write the user document (now authenticated).
+      // ============================================================
+      debugPrint('STEP 3: Writing user doc to Firestore...');
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'username': username,
+        'usernameLower': username.toLowerCase(),
+        'email': email,
         'bio': '',
         'avatarUrl': '',
         'partnershipCount': 0,
-        'unreadNotificationCount': 0,   // ← badge counter
-        'totalUnreadMessages': 0,        // ← chat badge counter
+        'unreadNotificationCount': 0,
+        'totalUnreadMessages': 0,
         'createdAt': FieldValue.serverTimestamp(),
         'isOnline': true,
         'isBanned': false,
+        'isCheater': false,
         'lastSeenAt': FieldValue.serverTimestamp(),
       });
       debugPrint('STEP 3 OK');
 
-      // Cache the username for this session
-      CurrentUserCache.set(_usernameController.text.trim());
+      CurrentUserCache.set(username);
 
-      // STEP 4: Send verification email
+      // ============================================================
+      // STEP 4: Send verification email (best-effort).
+      // ============================================================
       try {
         await cred.user!.sendEmailVerification();
         debugPrint('STEP 4 OK: Verification email sent');
@@ -127,7 +152,9 @@ class _SignupScreenState extends State<SignupScreen> {
         debugPrint('STEP 4 WARNING: $e');
       }
 
-      // STEP 5: Sign out
+      // ============================================================
+      // STEP 5: Sign out so user must log in explicitly.
+      // ============================================================
       await FirebaseAuth.instance.signOut();
       debugPrint('STEP 5 OK: Signed out');
 
@@ -363,6 +390,10 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 }
+
+
+
+
 
 
 

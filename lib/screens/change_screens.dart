@@ -441,6 +441,13 @@ class _ChangeUsernameScreenState extends State<ChangeUsernameScreen> {
         'lastUsernameChange': FieldValue.serverTimestamp(),
       });
 
+      // Keep Auth displayName in sync so it never goes stale
+      try {
+        await user.updateDisplayName(newUsername);
+      } catch (e) {
+        debugPrint('[ChangeUsername] displayName update failed: $e');
+      }
+
       // Update the cache immediately
       CurrentUserCache.set(newUsername);
 
@@ -607,5 +614,6 @@ class ViewContractScreen extends StatelessWidget {
     );
   }
 }
+
 
 

@@ -9,7 +9,10 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/post_model.dart';
 import '../screens/comment_sheet.dart';
+import '../screens/post_detail_screen.dart';
 import '../screens/chat_screen.dart';
+import '../services/rate_limiter.dart';
+import '../services/rate_limit_service.dart';
 
 class PostCard extends StatefulWidget {
   final PostModel post;
@@ -125,6 +128,13 @@ class _PostCardState extends State<PostCard> {
   Future<void> _toggleLike() async {
     if (currentUserId == null || _likeLoading) return;
 
+    // Layer 1: debounce (1s)
+    final ok = await RateLimiter.allow(
+      action: 'toggle_like',
+      cooldown: RateLimits.toggleLike,
+    );
+    if (!ok) return;
+
     // ===== OPTIMISTIC UI: flip state instantly =====
     final wasLiked = _isLiked;
     setState(() {
@@ -150,6 +160,31 @@ class _PostCardState extends State<PostCard> {
           debugPrint('[Activity] unlike mirror error: $e');
         }
       } else {
+        // Layer 2: hourly cap for likes
+        final batch = FirebaseFirestore.instance.batch();
+        try {
+          await RateLimitService.checkAndBump(
+            batch: batch,
+            bucket: 'likes',
+            cap: RateLimits.likesPerHour,
+            window: const Duration(hours: 1),
+          );
+        } on RateLimitException catch (e) {
+          if (mounted) {
+            showRateLimitMessage(
+              context,
+              action: 'liking posts',
+              seconds: e.retryAfterSeconds ?? 3600,
+            );
+            setState(() {
+              _isLiked = wasLiked;
+              _likeLoading = false;
+            });
+          }
+          return;
+        }
+        await batch.commit();
+
         await likeRef.set({
           'userId': currentUserId,
           'timestamp': FieldValue.serverTimestamp(),
@@ -311,7 +346,16 @@ class _PostCardState extends State<PostCard> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (widget.post.userId == currentUserId)
+            if (widget.post.userId == currentUserId) ...[
+              ListTile(
+                leading: const Icon(Icons.edit, color: Colors.blue),
+                title: const Text('Edit Post',
+                  style: TextStyle(color: Colors.blue)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showEditDialog();
+                },
+              ),
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('Delete Post',
@@ -343,7 +387,7 @@ class _PostCardState extends State<PostCard> {
                   }
                 },
               ),
-
+            ],
             ListTile(
               leading: const Icon(Icons.share),
               title: const Text('Share'),
@@ -353,6 +397,104 @@ class _PostCardState extends State<PostCard> {
               leading: const Icon(Icons.cancel),
               title: const Text('Cancel'),
               onTap: () => Navigator.pop(context),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+
+  Future<void> _showEditDialog() async {
+    final controller = TextEditingController(text: widget.post.content);
+    bool saving = false;
+    String? error;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+          title: const Text('Edit Post'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                maxLength: 200,
+                maxLines: 5,
+                minLines: 3,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'What do you want to partner for?',
+                  errorText: error,
+                  counterText: '',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final text = controller.text.trim();
+                      if (text.isEmpty) {
+                        setDialogState(() =>
+                          error = 'Post cannot be empty');
+                        return;
+                      }
+                      if (text.length > 200) {
+                        setDialogState(() =>
+                          error = 'Max 200 characters');
+                        return;
+                      }
+                      setDialogState(() { saving = true; error = null; });
+                      try {
+                        await FirebaseFirestore.instance
+                            .collection('posts')
+                            .doc(widget.post.id)
+                            .update({
+                          'content': text,
+                          'contentLower': text.toLowerCase(),
+                          'isEdited': true,
+                          'updatedAt': FieldValue.serverTimestamp(),
+                        });
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Post updated'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } catch (e) {
+                        setDialogState(() {
+                          error = 'Failed: $e';
+                          saving = false;
+                        });
+                      }
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue[700],
+                foregroundColor: Colors.white,
+              ),
+              child: saving
+                  ? const SizedBox(
+                      height: 18, width: 18,
+                      child: CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 2))
+                  : const Text('Save'),
             ),
           ],
         ),
@@ -579,6 +721,11 @@ class _PostCardState extends State<PostCard> {
     );
   }
 }
+
+
+
+
+
 
 
 

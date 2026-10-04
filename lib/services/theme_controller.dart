@@ -1,9 +1,14 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 /// App-wide theme controller. Listens to Firestore user settings
 /// and notifies listeners when dark mode changes.
+///
+/// Auth-aware: re-subscribes to the new user's doc when the account
+/// changes so dark mode follows the current user. Resets to light
+/// mode on logout.
 class ThemeController extends ChangeNotifier {
   static final ThemeController _instance = ThemeController._internal();
   factory ThemeController() => _instance;
@@ -12,7 +17,11 @@ class ThemeController extends ChangeNotifier {
   bool _isDarkMode = false;
   bool get isDarkMode => _isDarkMode;
 
-  /// Load from Firestore at startup.
+  StreamSubscription<DocumentSnapshot>? _userDocSub;
+  StreamSubscription<User?>? _authSub;
+  String? _lastUid;
+
+  /// Load from Firestore at startup (before auth state emits).
   Future<void> load() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -27,12 +36,32 @@ class ThemeController extends ChangeNotifier {
     }
   }
 
-  /// Live listen to the user doc so changes propagate instantly.
+  /// Live listen: re-subscribes on every account change.
   void startListening() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
+    _authSub?.cancel();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      _subscribeToUser(user?.uid);
+    });
+  }
 
-    FirebaseFirestore.instance
+  void _subscribeToUser(String? uid) {
+    // Skip if we're already listening to the same user.
+    if (uid == _lastUid && _userDocSub != null) return;
+
+    _userDocSub?.cancel();
+    _userDocSub = null;
+    _lastUid = uid;
+
+    if (uid == null) {
+      // Logged out — reset to light mode.
+      if (_isDarkMode) {
+        _isDarkMode = false;
+        notifyListeners();
+      }
+      return;
+    }
+
+    _userDocSub = FirebaseFirestore.instance
         .collection('users').doc(uid)
         .snapshots()
         .listen((snap) {
@@ -42,6 +71,8 @@ class ThemeController extends ChangeNotifier {
         _isDarkMode = newDark;
         notifyListeners();
       }
+    }, onError: (e) {
+      debugPrint('[Theme] stream error: $e');
     });
   }
 
@@ -60,5 +91,20 @@ class ThemeController extends ChangeNotifier {
     } catch (e) {
       debugPrint('[Theme] save error: $e');
     }
+  }
+
+  /// Force-clear cached UID so next auth event re-subscribes.
+  /// Useful if you ever need to manually trigger a refresh.
+  void reset() {
+    _userDocSub?.cancel();
+    _userDocSub = null;
+    _lastUid = null;
+  }
+
+  @override
+  void dispose() {
+    _userDocSub?.cancel();
+    _authSub?.cancel();
+    super.dispose();
   }
 }

@@ -7,6 +7,7 @@ import '../services/partnership_service.dart';
 import 'report_sheet.dart';
 import 'partnership_sheet.dart';
 import '../services/block_service.dart';
+import '../services/rate_limiter.dart';
 
 class ChatScreen extends StatefulWidget {
   final String otherUserId;
@@ -72,27 +73,40 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
+    // ✅ Listen to chat doc for the OTHER user's read marker.
+    // Uses a plain listener + ValueNotifier — does NOT rebuild the tree.
+    _chatDocSub = FirebaseFirestore.instance
+        .collection('chats').doc(_chatId)
+        .snapshots()
+        .listen((snap) {
+      final data = snap.data();
+      if (data == null) return;
+      final otherMarker = _isUserA
+          ? (data['lastReadByUserB'] as Timestamp?)
+          : (data['lastReadByUserA'] as Timestamp?);
+      _otherLastRead.value = otherMarker;
+    });
+
     _ensureChatExists().then((_) => _markRead());
   }
 
   Future<void> _ensureChatExists() async {
+    // ⭐ Single write — no read, so no read-rule crash on non-existent docs.
+    //    set(merge:true) creates if missing, patches if present. Idempotent.
     final ref = FirebaseFirestore.instance.collection('chats').doc(_chatId);
-    final doc = await ref.get();
-    if (!doc.exists) {
-      await ref.set({
-        'userA': _isUserA ? _currentUserId : widget.otherUserId,
-        'userB': _isUserA ? widget.otherUserId : _currentUserId,
-        'lastMessage': '',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageSenderId': '',
-        'unreadForUserA': 0,
-        'unreadForUserB': 0,
-        'lastReadByUserA': null,
-        'lastReadByUserB': null,
-        'createdAt': FieldValue.serverTimestamp(),
-        'partnershipStatus': 'none',
-      });
-    }
+    await ref.set({
+      'userA': _isUserA ? _currentUserId : widget.otherUserId,
+      'userB': _isUserA ? widget.otherUserId : _currentUserId,
+      'lastMessage': '',
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastMessageSenderId': '',
+      'unreadForUserA': 0,
+      'unreadForUserB': 0,
+      'lastReadByUserA': null,
+      'lastReadByUserB': null,
+      'createdAt': FieldValue.serverTimestamp(),
+      'partnershipStatus': 'none',
+    }, SetOptions(merge: true));
   }
 
   /// Debounced mark-read. Only writes if not called in the last 2 seconds.
@@ -138,36 +152,41 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Block check
-    try {
-      final iBlocked = await BlockService.haveIBlocked(widget.otherUserId);
-      final theyBlocked = await BlockService.hasBlockedMe(widget.otherUserId);
-      if (iBlocked) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You blocked this user. Unblock to send messages.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-      if (theyBlocked) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You cannot message this user.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-    } catch (e) {
-      debugPrint('[Chat] block check error: $e');
-    }
-
     setState(() => _sending = true);
     try {
+      // ⭐ Ensure chat doc exists FIRST — inside try so failures are visible.
+      await _ensureChatExists();
+
+      // Block check
+      try {
+        final iBlocked = await BlockService.haveIBlocked(widget.otherUserId);
+        final theyBlocked =
+            await BlockService.hasBlockedMe(widget.otherUserId);
+        if (iBlocked) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content:
+                  Text('You blocked this user. Unblock to send messages.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        if (theyBlocked) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('You cannot message this user.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      } catch (e) {
+        debugPrint('[Chat] block check error: $e');
+      }
+
       await FirebaseFirestore.instance
           .collection('chats').doc(_chatId)
           .collection('messages').add({
@@ -199,12 +218,41 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       debugPrint('[Chat] send error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
-    if (mounted) setState(() => _sending = false);
   }
 
   Future<void> _proposePartnership() async {
     if (_requesting) return;
+
+    // Layer 1: 1 partnership proposal per 2 minutes
+    const cooldown = RateLimits.proposePartnership;
+    final ok = await RateLimiter.allow(
+      action: 'propose_partnership',
+      cooldown: cooldown,
+    );
+    if (!ok) {
+      final secs = await RateLimiter.secondsRemaining(
+        action: 'propose_partnership',
+        cooldown: cooldown,
+      );
+      if (!mounted) return;
+      showRateLimitMessage(
+        context,
+        action: 'sending a partnership request',
+        seconds: secs,
+      );
+      return;
+    }
 
     final reasonController = TextEditingController();
     if (widget.postContent != null && widget.postContent!.isNotEmpty) {
@@ -440,6 +488,8 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
+    _chatDocSub?.cancel();
+    _otherLastRead.dispose();
     super.dispose();
   }
 
@@ -1062,6 +1112,10 @@ class _ReportMenuButton extends StatelessWidget {
     );
   }
 }
+
+
+
+
 
 
 

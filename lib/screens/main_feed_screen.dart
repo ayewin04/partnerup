@@ -8,6 +8,8 @@ import '../widgets/post_card.dart';
 import 'chat_list_screen.dart';
 import 'notifications_screen.dart';
 import '../services/report_service.dart';
+import '../services/rate_limiter.dart';
+import '../services/rate_limit_service.dart';
 
 enum FeedFilter { newest, mostInteracted, random }
 
@@ -245,8 +247,23 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     final text = _postController.text.trim();
     if (text.isEmpty) return;
     if (text.length > 200) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Post must be under 200 characters')));
+      showErrorSnack(context, 'Post must be under 200 characters');
+      return;
+    }
+
+    // ---- Layer 1: client cooldown ----
+    const cooldown = RateLimits.createPost;
+    final ok = await RateLimiter.allow(
+      action: 'create_post',
+      cooldown: cooldown,
+    );
+    if (!ok) {
+      final secs = await RateLimiter.secondsRemaining(
+        action: 'create_post',
+        cooldown: cooldown,
+      );
+      if (!mounted) return;
+      showRateLimitMessage(context, action: 'posting', seconds: secs);
       return;
     }
 
@@ -254,18 +271,52 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     try {
       final user = FirebaseAuth.instance.currentUser!;
 
-      // ---- Use cached username; only read Firestore if not cached ----
-      String username = _cachedUsername ?? '';
-      if (username.isEmpty) {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users').doc(user.uid).get();
-        username = userDoc.data()?['username'] ?? 'Unknown';
-        _cachedUsername = username;
+      // ⭐ Prefer Auth displayName (server-persisted, per-user, never stale).
+      //    Fall back to a uid-derived handle if somehow missing.
+      String username = user.displayName ?? '';
+      if (username.isEmpty || username == 'Unknown') {
+        // One-time repair: pull from Firestore and push to displayName
+        try {
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users').doc(user.uid).get();
+          final fetched = userDoc.data()?['username'] as String?;
+          if (fetched != null && fetched.isNotEmpty && fetched != 'Unknown') {
+            username = fetched;
+            await user.updateDisplayName(fetched);
+          }
+        } catch (e) {
+          debugPrint('[Feed] username repair failed: $e');
+        }
+      }
+      if (username.isEmpty || username == 'Unknown') {
+        username = 'user_${user.uid.substring(0, 6)}';
+      }
+      _cachedUsername = username;
+
+      // ---- Build the batch ----
+      final batch = FirebaseFirestore.instance.batch();
+
+      // Layer 2: server counter (cap = 1 within 30s window)
+      try {
+        await RateLimitService.checkAndBump(
+          batch: batch,
+          bucket: 'posts',
+          cap: 1,
+          window: cooldown,
+        );
+      } on RateLimitException catch (e) {
+        if (!mounted) return;
+        showRateLimitMessage(
+          context,
+          action: 'posting',
+          seconds: e.retryAfterSeconds ?? 30,
+        );
+        return;
       }
 
-      // ---- Create post ----
-      final newDoc = await FirebaseFirestore.instance
-          .collection('posts').add({
+      // The actual post
+      final newRef = FirebaseFirestore.instance.collection('posts').doc();
+      batch.set(newRef, {
         'userId': user.uid,
         'username': username,
         'content': text,
@@ -276,12 +327,14 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
+      await batch.commit();
+
       _postController.clear();
       _focusNode.unfocus();
 
-      // ---- Build PostModel locally (no extra read!) ----
+      // Optimistic insert
       final localPost = PostModel(
-        id: newDoc.id,
+        id: newRef.id,
         userId: user.uid,
         username: username,
         content: text,
@@ -290,21 +343,24 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
         viewsCount: 0,
         createdAt: Timestamp.now(),
       );
-
-      setState(() {
-        _posts.insert(0, localPost);
-      });
+      setState(() => _posts.insert(0, localPost));
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Post published!')));
-    } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to publish post')));
+        const SnackBar(
+          content: Text('Post published!'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Feed] create post error: $e');
       if (mounted) {
-        _cachedUsername = null; // invalidate cache on failure
+        showErrorSnack(context, firestoreErrorToMessage(e));
+        _cachedUsername = null;
       }
+    } finally {
+      if (mounted) setState(() => _posting = false);
     }
-    if (mounted) setState(() => _posting = false);
   }
 
   void _onFilterChanged(FeedFilter f) {
@@ -830,6 +886,9 @@ class _ReportBanner extends StatelessWidget {
     );
   }
 }
+
+
+
 
 
 

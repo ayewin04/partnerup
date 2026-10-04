@@ -6,6 +6,7 @@ import '../models/post_model.dart';
 import '../widgets/post_card.dart';
 import '../widgets/paginated_list_view.dart';
 import 'chat_screen.dart';
+import 'post_detail_screen.dart';
 
 enum ActivityType { likes, comments, partnerships }
 
@@ -121,7 +122,15 @@ class _ActivityScreenState extends State<ActivityScreen> {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () {
-          // Optionally navigate to post detail
+          if (postId.isEmpty) return;
+          Navigator.push(context, MaterialPageRoute(
+            builder: (_) => PostDetailScreen(
+              postId: postId,
+              fallbackContent: content,
+              fallbackUsername: username,
+              fallbackUserId: postUserId,
+            ),
+          ));
         },
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -189,24 +198,9 @@ class _ActivityScreenState extends State<ActivityScreen> {
     );
   }
 
-  // ============ PARTNERSHIPS (paginated) ============
+  // ============ PARTNERSHIPS (no index — merged both sides) ============
   Widget _partnershipsList() {
-    final base = FirebaseFirestore.instance
-        .collection('partnerships')
-        .where('userA', isEqualTo: uid)
-        .orderBy('createdAt', descending: true);
-
-    return PaginatedListView(
-      pageSize: 20,
-      firstPageQuery: () => base.limit(20),
-      nextPageLoader: (lastDoc) =>
-          base.startAfterDocument(lastDoc).limit(20),
-      itemBuilder: (context, doc) => _partnershipTile(doc),
-      emptyBuilder: (context) => _emptyState(
-        icon: Icons.handshake_outlined,
-        text: 'No partnerships yet',
-      ),
-    );
+    return _PartnershipsMergedList(uid: uid!);
   }
 
   Widget _partnershipTile(DocumentSnapshot doc) {
@@ -322,3 +316,278 @@ class _ActivityScreenState extends State<ActivityScreen> {
   }
 }
 
+
+
+
+// ============================================================
+// PARTNERSHIPS MERGED LIST — no composite index needed
+// Fetches userA=me and userB=me separately (single where each),
+// merges, sorts in Dart, paginates client-side.
+// ============================================================
+class _PartnershipsMergedList extends StatefulWidget {
+  final String uid;
+  const _PartnershipsMergedList({required this.uid});
+
+  @override
+  State<_PartnershipsMergedList> createState() =>
+      _PartnershipsMergedListState();
+}
+
+class _PartnershipsMergedListState
+    extends State<_PartnershipsMergedList> {
+  List<DocumentSnapshot> _docs = [];
+  int _visible = 20;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final db = FirebaseFirestore.instance;
+      // Each query has ONE where, no orderBy → zero index needed
+      final results = await Future.wait([
+        db
+            .collection('partnerships')
+            .where('userA', isEqualTo: widget.uid)
+            .limit(100)
+            .get(),
+        db
+            .collection('partnerships')
+            .where('userB', isEqualTo: widget.uid)
+            .limit(100)
+            .get(),
+      ]);
+
+      // Merge + dedupe
+      final seen = <String>{};
+      final merged = <DocumentSnapshot>[];
+      for (final snap in results) {
+        for (final d in snap.docs) {
+          if (seen.add(d.id)) merged.add(d);
+        }
+      }
+
+      // Sort newest-first in Dart
+      merged.sort((a, b) {
+        final ta =
+            (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
+        final tb =
+            (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _docs = merged;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('[Partnerships] load error: $e');
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 50, color: Colors.red),
+              const SizedBox(height: 12),
+              Text(_error!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _load,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_docs.isEmpty) {
+      return _emptyState(
+        icon: Icons.handshake_outlined,
+        text: 'No partnerships yet',
+      );
+    }
+
+    final visible = _docs.take(_visible).toList();
+    final hasMore = _visible < _docs.length;
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(12),
+        itemCount: visible.length + (hasMore ? 1 : 0),
+        itemBuilder: (context, i) {
+          if (i == visible.length) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Center(
+                child: Column(
+                  children: [
+                    Text(
+                      'Showing $_visible of ${_docs.length}',
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          setState(() => _visible += 20),
+                      icon: const Icon(Icons.expand_more, size: 18),
+                      label: const Text('Load More'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          return _tile(visible[i]);
+        },
+      ),
+    );
+  }
+
+  Widget _tile(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final userA = data['userA'] as String? ?? '';
+    final userB = data['userB'] as String? ?? '';
+    final usernameA = data['usernameA'] ?? 'User';
+    final usernameB = data['usernameB'] ?? 'User';
+    final reason = data['reason'] ?? '';
+    final createdAt = data['createdAt'] as Timestamp?;
+
+    final otherUserId = userA == widget.uid ? userB : userA;
+    final otherUsername = userA == widget.uid ? usernameB : usernameA;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(12),
+        leading: CircleAvatar(
+          radius: 22,
+          backgroundColor: Colors.blue[100],
+          child: Text(
+            otherUsername.isNotEmpty
+                ? otherUsername[0].toUpperCase()
+                : '?',
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.blue,
+            ),
+          ),
+        ),
+        title: Text(
+          otherUsername,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (reason.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  reason,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            if (createdAt != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  DateFormat('MMM d, y').format(createdAt.toDate()),
+                  style:
+                      TextStyle(fontSize: 11, color: Colors.grey[600]),
+                ),
+              ),
+          ],
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.chat_bubble_outline,
+              color: Colors.blue),
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ChatScreen(
+                otherUserId: otherUserId,
+                otherUsername: otherUsername,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState({required IconData icon, required String text}) {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 60, color: Colors.grey),
+                const SizedBox(height: 12),
+                Text(
+                  text,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey, fontSize: 15),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

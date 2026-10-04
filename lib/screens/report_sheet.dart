@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import '../services/report_service.dart';
+import '../services/rate_limiter.dart';
 
 class ReportSheet extends StatefulWidget {
   final String reportedUserId;
@@ -22,6 +23,22 @@ class _ReportSheetState extends State<ReportSheet> {
   String? _error;
 
   Future<void> _submit() async {
+    // Layer 1: client cooldown — 1 report per 3 days
+    const cooldown = RateLimits.submitReport;
+    final ok = await RateLimiter.allow(
+      action: 'submit_report',
+      cooldown: cooldown,
+    );
+    if (!ok) {
+      final secs = await RateLimiter.secondsRemaining(
+        action: 'submit_report',
+        cooldown: cooldown,
+      );
+      setState(() => _error =
+        'You can submit another report in ${formatCooldown(secs)}.');
+      return;
+    }
+
     final reason = _reasonController.text.trim();
     final proof = _proofController.text.trim();
 
@@ -258,3 +275,5 @@ class _ReportSheetState extends State<ReportSheet> {
     );
   }
 }
+
+

@@ -15,55 +15,47 @@ class _ChatListScreenState extends State<ChatListScreen> {
   final _currentUserId = FirebaseAuth.instance.currentUser!.uid;
   static const int _pageSize = 20;
 
-  // Merged chat list — one-shot loaded, paginated
+  // Merged + sorted chat list — one-shot loaded, paginated client-side.
   final List<QueryDocumentSnapshot> _chats = [];
-  DocumentSnapshot? _lastDoc;  // last doc after global sort
   bool _loading = true;
   bool _loadingMore = false;
-  bool _hasMore = true;
 
   @override
   void initState() {
     super.initState();
-    _loadPage(reset: true);
+    _load(reset: true);
   }
 
-  /// Loads one page of chats. We fetch 2× (pageSize × 2) from each side
-  /// to account for merges + sort across userA/userB, then keep the top
-  /// `_pageSize` uniques. The cursor is stored on the merged/sorted list.
-  Future<void> _loadPage({required bool reset}) async {
+  /// Fetches chats where I'm userA and userB separately.
+  /// No orderBy + where combo → zero composite indexes needed.
+  Future<void> _load({required bool reset}) async {
     if (reset) {
       setState(() {
         _loading = true;
         _chats.clear();
-        _lastDoc = null;
-        _hasMore = true;
       });
     } else {
-      if (_loadingMore || !_hasMore) return;
+      if (_loadingMore) return;
       setState(() => _loadingMore = true);
     }
 
     try {
       final db = FirebaseFirestore.instance;
-      final fetchLimit = _pageSize * 2;
-
-      final futures = <Future<QuerySnapshot>>[
-        db.collection('chats')
+      // Fetch up to 200 from each side; merged/sorted below.
+      final results = await Future.wait([
+        db
+            .collection('chats')
             .where('userA', isEqualTo: _currentUserId)
-            .orderBy('lastMessageTime', descending: true)
-            .limit(fetchLimit)
+            .limit(200)
             .get(),
-        db.collection('chats')
+        db
+            .collection('chats')
             .where('userB', isEqualTo: _currentUserId)
-            .orderBy('lastMessageTime', descending: true)
-            .limit(fetchLimit)
+            .limit(200)
             .get(),
-      ];
+      ]);
 
-      final results = await Future.wait(futures);
-
-      // Merge + dedupe
+      // Merge + dedupe by doc id
       final seen = <String>{};
       final merged = <QueryDocumentSnapshot>[];
       for (final snap in results) {
@@ -72,7 +64,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         }
       }
 
-      // Sort newest-first
+      // Sort newest-first in Dart (lastMessageTime desc).
       merged.sort((a, b) {
         final ta = (a.data() as Map<String, dynamic>)['lastMessageTime']
             as Timestamp?;
@@ -84,16 +76,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
         return tb.compareTo(ta);
       });
 
-      // Drop anything already loaded (by id)
-      final existing = _chats.map((d) => d.id).toSet();
-      final fresh = merged.where((d) => !existing.contains(d.id)).toList();
-
-      final page = fresh.take(_pageSize).toList();
-
       if (!mounted) return;
       setState(() {
-        _chats.addAll(page);
-        _hasMore = fresh.length >= _pageSize;
+        _chats
+          ..clear()
+          ..addAll(merged);
         _loading = false;
       });
     } catch (e) {
@@ -104,17 +91,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
+  /// Client-side "load more": we already fetched up to 200 from each side.
+  /// This just reveals more of the cached list — no network.
+  void _showMore() {
+    setState(() => _loadingMore = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chats',
-          style: TextStyle(fontWeight: FontWeight.bold)),
+            style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
-            onPressed: () => _loadPage(reset: true),
+            onPressed: () => _load(reset: true),
           ),
         ],
       ),
@@ -126,52 +119,29 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(Icons.chat_bubble_outline,
-                        size: 80, color: Colors.grey),
+                          size: 80, color: Colors.grey),
                       SizedBox(height: 16),
                       Text('No chats yet',
-                        style: TextStyle(fontSize: 18, color: Colors.grey)),
+                          style: TextStyle(
+                              fontSize: 18, color: Colors.grey)),
                       SizedBox(height: 8),
                       Text('Start by chatting with someone on the feed',
-                        style: TextStyle(fontSize: 13, color: Colors.grey)),
+                          style: TextStyle(
+                              fontSize: 13, color: Colors.grey)),
                     ],
                   ),
                 )
               : RefreshIndicator(
-                  onRefresh: () => _loadPage(reset: true),
+                  onRefresh: () => _load(reset: true),
                   child: ListView.separated(
-                    itemCount: _chats.length + (_hasMore ? 1 : 0),
+                    itemCount: _chats.length,
                     separatorBuilder: (_, __) => Divider(
-                        height: 1, color: Theme.of(context).dividerColor),
-                    itemBuilder: (context, i) {
-                      if (i == _chats.length) {
-                        if (_loadingMore) {
-                          return const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Center(
-                              child: SizedBox(
-                                height: 20, width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2),
-                              ),
-                            ),
-                          );
-                        }
-                        return Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Center(
-                            child: OutlinedButton.icon(
-                              onPressed: () => _loadPage(reset: false),
-                              icon: const Icon(Icons.expand_more, size: 18),
-                              label: const Text('Load More'),
-                            ),
-                          ),
-                        );
-                      }
-                      return _ChatRow(
-                        chatDoc: _chats[i],
-                        currentUserId: _currentUserId,
-                      );
-                    },
+                        height: 1,
+                        color: Theme.of(context).dividerColor),
+                    itemBuilder: (context, i) => _ChatRow(
+                      chatDoc: _chats[i],
+                      currentUserId: _currentUserId,
+                    ),
                   ),
                 ),
     );
@@ -194,7 +164,7 @@ class _ChatRow extends StatelessWidget {
     final lastTime = data['lastMessageTime'] as Timestamp?;
     final lastSenderId = data['lastMessageSenderId'] as String?;
 
-    // -------- Unread count from counter fields --------
+    // Unread count for my side.
     final amIUserA = userA == currentUserId;
     final int unreadCount = amIUserA
         ? (data['unreadForUserA'] ?? 0) as int
@@ -202,15 +172,17 @@ class _ChatRow extends StatelessWidget {
 
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('users').doc(otherUserId).snapshots(),
+          .collection('users')
+          .doc(otherUserId)
+          .snapshots(),
       builder: (context, userSnap) {
         final uData = userSnap.data?.data() as Map<String, dynamic>?;
         final username = uData?['username'] ?? 'Unknown';
         final isOnline = uData?['isOnline'] == true;
 
         return ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 8),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           leading: Stack(
             children: [
               CircleAvatar(
@@ -218,7 +190,8 @@ class _ChatRow extends StatelessWidget {
                 backgroundColor: Colors.blue[100],
                 child: Text(
                   username.isNotEmpty
-                    ? username[0].toUpperCase() : '?',
+                      ? username[0].toUpperCase()
+                      : '?',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -228,14 +201,16 @@ class _ChatRow extends StatelessWidget {
               ),
               if (isOnline)
                 Positioned(
-                  right: 0, bottom: 0,
+                  right: 0,
+                  bottom: 0,
                   child: Container(
-                    width: 14, height: 14,
+                    width: 14,
+                    height: 14,
                     decoration: BoxDecoration(
                       color: Colors.green,
                       shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white, width: 2),
+                      border:
+                          Border.all(color: Colors.white, width: 2),
                     ),
                   ),
                 ),
@@ -277,13 +252,14 @@ class _ChatRow extends StatelessWidget {
               children: [
                 if (lastSenderId == currentUserId) ...[
                   Icon(Icons.done_all,
-                    size: 14,
-                    color: Colors.blue[400]),
+                      size: 14, color: Colors.blue[400]),
                   const SizedBox(width: 4),
                 ],
                 Expanded(
                   child: Text(
-                    lastMessage.isEmpty ? 'No messages yet' : lastMessage,
+                    lastMessage.isEmpty
+                        ? 'No messages yet'
+                        : lastMessage,
                     style: TextStyle(
                       fontSize: 13,
                       color: unreadCount > 0
@@ -301,7 +277,7 @@ class _ChatRow extends StatelessWidget {
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 7, vertical: 3),
+                        horizontal: 7, vertical: 3),
                     constraints: const BoxConstraints(minWidth: 22),
                     decoration: BoxDecoration(
                       color: Colors.blue[600],
@@ -322,14 +298,15 @@ class _ChatRow extends StatelessWidget {
             ),
           ),
           onTap: () async {
-            await Navigator.push(context,
-              MaterialPageRoute(builder: (_) => ChatScreen(
-                otherUserId: otherUserId,
-                otherUsername: username,
-              )),
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ChatScreen(
+                  otherUserId: otherUserId,
+                  otherUsername: username,
+                ),
+              ),
             );
-            // When returning, force rebuild so counter reflects the reset
-            // (the listener will already update, this is just a safety)
           },
         );
       },
@@ -351,8 +328,3 @@ class _ChatRow extends StatelessWidget {
     return DateFormat('MMM d').format(d);
   }
 }
-
-
-
-
-

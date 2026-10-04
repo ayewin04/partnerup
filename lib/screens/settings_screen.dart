@@ -10,6 +10,7 @@ import 'about_screen.dart';
 import 'contact_screen.dart';
 import 'privacy_policy_screen.dart';
 import '../services/theme_controller.dart';
+import '../services/rate_limiter.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -96,6 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } catch (_) {}
     await FirebaseAuth.instance.signOut();
+    await RateLimiter.clear();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
@@ -124,11 +126,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: const Icon(Icons.check, color: Colors.blue),
               title: const Text('English'),
               onTap: () => Navigator.pop(context),
-            ),
-            ListTile(
-              leading: const SizedBox(width: 24),
-              title: const Text('Coming soon: More languages'),
-              enabled: false,
             ),
             const SizedBox(height: 12),
           ],
@@ -377,6 +374,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
+
 
 
 

@@ -43,18 +43,33 @@ class _PartnershipListenerState extends State<PartnershipListener> {
     _userDocSub = null;
     if (uid == null) return;
 
+    // Track how long the doc has been missing so we don't
+    // log out users whose doc just hasn't been written yet
+    // (happens during signup).
+    DateTime? missingSince;
+
     _userDocSub = FirebaseFirestore.instance
         .collection('users').doc(uid)
         .snapshots()
         .listen((snap) {
       if (!mounted) return;
 
-      // Doc missing → account was deleted
+      // Doc missing → only logout after a grace period
       if (!snap.exists) {
-        debugPrint('[AuthGuard] user doc missing → logout');
+        missingSince ??= DateTime.now();
+        final waited = DateTime.now().difference(missingSince!);
+        if (waited.inSeconds < 10) {
+          debugPrint(
+              '[AuthGuard] doc missing, waiting ${waited.inSeconds}s');
+          return;
+        }
+        debugPrint('[AuthGuard] user doc missing 10s → logout');
         _forceLogout('Your account has been deleted.');
         return;
       }
+
+      // Doc exists → clear the missing timer
+      missingSince = null;
 
       // Check banned flag
       final data = snap.data() as Map<String, dynamic>?;
@@ -181,4 +196,6 @@ class _PartnershipListenerState extends State<PartnershipListener> {
     );
   }
 }
+
+
 

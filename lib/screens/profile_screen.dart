@@ -10,6 +10,7 @@ import 'splash_screen.dart';
 import 'settings_screen.dart';
 import 'admin_dashboard_screen.dart';
 import 'chat_screen.dart';
+import '../services/rate_limiter.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -64,6 +65,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       }
     } catch (_) {}
     await FirebaseAuth.instance.signOut();
+    await RateLimiter.clear();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
@@ -417,27 +419,9 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  // ============ TAB 2: MY PARTNERSHIPS (20 + Load More) ============
+  // ============ TAB 2: MY PARTNERSHIPS (merged both sides) ============
   Widget _partnershipsTab() {
-    // No composite index needed — filter by userA only.
-    return PaginatedListView(
-      pageSize: 20,
-      firstPageQuery: () => FirebaseFirestore.instance
-          .collection('partnerships')
-          .where('userA', isEqualTo: uid)
-          .limit(20),
-      nextPageLoader: (lastDoc) => FirebaseFirestore.instance
-          .collection('partnerships')
-          .where('userA', isEqualTo: uid)
-          .startAfterDocument(lastDoc)
-          .limit(20),
-      itemBuilder: (context, doc) => _partnershipCard(doc),
-      emptyBuilder: (context) => _emptyState(
-        icon: Icons.handshake_outlined,
-        title: 'No partnerships yet',
-        subtitle: 'Partner up with someone to see it here!',
-      ),
-    );
+    return _ProfilePartnershipsMerged(uid: uid!);
   }
 
   // ignore: unused_element
@@ -790,4 +774,331 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
 
 
 
+
+
+
+
+// ============================================================
+// PROFILE PARTNERSHIPS MERGED — no composite index needed.
+// Fetches userA=me and userB=me separately, merges, sorts in Dart.
+// ============================================================
+class _ProfilePartnershipsMerged extends StatefulWidget {
+  final String uid;
+  const _ProfilePartnershipsMerged({required this.uid});
+
+  @override
+  State<_ProfilePartnershipsMerged> createState() =>
+      _ProfilePartnershipsMergedState();
+}
+
+class _ProfilePartnershipsMergedState
+    extends State<_ProfilePartnershipsMerged> {
+  List<DocumentSnapshot> _docs = [];
+  int _visible = 20;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final db = FirebaseFirestore.instance;
+      final results = await Future.wait([
+        db.collection('partnerships')
+            .where('userA', isEqualTo: widget.uid).limit(100).get(),
+        db.collection('partnerships')
+            .where('userB', isEqualTo: widget.uid).limit(100).get(),
+      ]);
+
+      final seen = <String>{};
+      final merged = <DocumentSnapshot>[];
+      for (final snap in results) {
+        for (final d in snap.docs) {
+          if (seen.add(d.id)) merged.add(d);
+        }
+      }
+
+      merged.sort((a, b) {
+        final ta = (a.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        final tb = (b.data() as Map<String, dynamic>)['createdAt']
+            as Timestamp?;
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        return tb.compareTo(ta);
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _docs = merged;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('[Profile Partnerships] error: $e');
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 50, color: Colors.red),
+              const SizedBox(height: 12),
+              Text(_error!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _load,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_docs.isEmpty) {
+      return _empty();
+    }
+
+    final visible = _docs.take(_visible).toList();
+    final hasMore = _visible < _docs.length;
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(12),
+        itemCount: visible.length + (hasMore ? 1 : 0),
+        itemBuilder: (context, i) {
+          if (i == visible.length) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Center(
+                child: Column(
+                  children: [
+                    Text(
+                      'Showing $_visible of ${_docs.length}',
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          setState(() => _visible += 20),
+                      icon: const Icon(Icons.expand_more, size: 18),
+                      label: const Text('Load More'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          return _tile(visible[i]);
+        },
+      ),
+    );
+  }
+
+  Widget _tile(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final userA = data['userA'] as String? ?? '';
+    final userB = data['userB'] as String? ?? '';
+    final usernameA = data['usernameA'] ?? 'User';
+    final usernameB = data['usernameB'] ?? 'User';
+    final reason = data['reason'] ?? '';
+    final createdAt = data['createdAt'] as Timestamp?;
+    final isReported = data['isReported'] == true;
+
+    final otherUserId = userA == widget.uid ? userB : userA;
+    final otherUsername = userA == widget.uid ? usernameB : usernameA;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => PartnershipSheet(
+            currentUserId: widget.uid,
+            otherUserId: otherUserId,
+            otherUsername: otherUsername,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Colors.blue[100],
+                    child: Text(
+                      otherUsername.isNotEmpty
+                          ? otherUsername[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(otherUsername,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            )),
+                        if (createdAt != null)
+                          Text(
+                            DateFormat('MMM d, y')
+                                .format(createdAt.toDate()),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (isReported)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red[50],
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.red[200]!),
+                      ),
+                      child: const Text('REPORTED',
+                          style: TextStyle(
+                            fontSize: 8,
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          )),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.chat_bubble_outline,
+                        size: 18, color: Colors.blue),
+                    tooltip: 'Chat',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChatScreen(
+                          otherUserId: otherUserId,
+                          otherUsername: otherUsername,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (reason.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.description_outlined,
+                          size: 13, color: Colors.blue),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(reason,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _empty() {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.handshake_outlined,
+                    size: 56, color: Colors.grey),
+                const SizedBox(height: 12),
+                Text('No partnerships yet',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: Colors.grey, fontSize: 15)),
+                const SizedBox(height: 6),
+                Text('Partner up with someone to see it here!',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: Colors.grey, fontSize: 12)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 

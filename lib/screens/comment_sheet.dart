@@ -3,6 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../models/comment_model.dart';
+import '../services/rate_limiter.dart';
+import '../services/rate_limit_service.dart';
 
 class CommentSheet extends StatefulWidget {
   final String postId;
@@ -108,6 +110,22 @@ class _CommentSheetState extends State<CommentSheet> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
+    // ---- Layer 1: client cooldown ----
+    const cooldown = RateLimits.sendComment;
+    final ok = await RateLimiter.allow(
+      action: 'send_comment',
+      cooldown: cooldown,
+    );
+    if (!ok) {
+      final secs = await RateLimiter.secondsRemaining(
+        action: 'send_comment',
+        cooldown: cooldown,
+      );
+      if (!mounted) return;
+      showRateLimitMessage(context, action: 'commenting', seconds: secs);
+      return;
+    }
+
     setState(() => _sending = true);
     try {
       final results = await Future.wait([
@@ -171,6 +189,24 @@ class _CommentSheetState extends State<CommentSheet> {
           {'unreadNotificationCount': FieldValue.increment(1)},
         );
       }
+      // ---- Layer 2: server counter ----
+      try {
+        await RateLimitService.checkAndBump(
+          batch: batch,
+          bucket: 'comments',
+          cap: 1,
+          window: RateLimits.sendComment,
+        );
+      } on RateLimitException catch (e) {
+        if (!mounted) return;
+        showRateLimitMessage(
+          context,
+          action: 'commenting',
+          seconds: e.retryAfterSeconds ?? 10,
+        );
+        return;
+      }
+
       await batch.commit();
 
       try {
@@ -612,3 +648,5 @@ class _CommentSheetState extends State<CommentSheet> {
     );
   }
 }
+
+

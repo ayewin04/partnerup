@@ -7,6 +7,9 @@ class ReportService {
 
   /// User 1 submits a report against User 2.
   /// Both reason and proof are required — this prevents revenge reporting.
+  ///
+  /// NO COMPOSITE INDEXES — every query uses a single `where`
+  /// and any extra filtering happens in Dart.
   static Future<String> submitReport({
     required String reportedId,
     required String reportedUsername,
@@ -19,39 +22,51 @@ class ReportService {
     }
 
     // ---- CHECK: Must have at least 1 partnership with the reported user ----
-    final p1 = await _db.collection('partnerships')
+    // Two single-where queries + Dart filter. No index needed.
+    final pA = await _db
+        .collection('partnerships')
         .where('userA', isEqualTo: me.uid)
-        .where('userB', isEqualTo: reportedId)
-        .limit(1)
+        .limit(50)
         .get();
-    final p2 = await _db.collection('partnerships')
-        .where('userA', isEqualTo: reportedId)
+    final pB = await _db
+        .collection('partnerships')
         .where('userB', isEqualTo: me.uid)
-        .limit(1)
+        .limit(50)
         .get();
 
-    if (p1.docs.isEmpty && p2.docs.isEmpty) {
+    final hasPartnership =
+        pA.docs.any((d) => d.data()['userB'] == reportedId) ||
+        pB.docs.any((d) => d.data()['userA'] == reportedId);
+
+    if (!hasPartnership) {
       throw Exception(
         'You can only report users you have partnered with before');
     }
 
-    // Check if User 2 already has an active report against them
-    final existing = await _db.collection('reports')
+    // ---- Check if the reported user already has an active report ----
+    // Single where + Dart filter. No index needed.
+    final existingSnap = await _db
+        .collection('reports')
         .where('reportedId', isEqualTo: reportedId)
-        .where('status', whereIn: [
-          'pending_proof',
-          'under_review',
-          'expired_proof',
-          'cheater',
-        ])
-        .limit(1)
+        .limit(20)
         .get();
 
-    if (existing.docs.isNotEmpty) {
+    const activeStatuses = [
+      'pending_proof',
+      'under_review',
+      'expired_proof',
+      'cheater',
+    ];
+    final hasActive = existingSnap.docs.any((d) {
+      final s = (d.data())['status'];
+      return activeStatuses.contains(s);
+    });
+
+    if (hasActive) {
       throw Exception('This user already has an active report');
     }
 
-    // Get my username
+    // ---- Get my username ----
     final meDoc = await _db.collection('users').doc(me.uid).get();
     final myUsername = meDoc.data()?['username'] ?? 'Unknown';
 
@@ -179,21 +194,27 @@ class ReportService {
       debugPrint('[Report] user update error: $e');
     }
 
-    // Notify past partners (users who have at least 1 partnership with the cheater)
+    // Notify past partners (single where + Dart filter → no index)
     try {
-      final partnerships = await _db.collection('partnerships')
-          .where('userA', whereIn: [reportedId])
+      final asA = await _db
+          .collection('partnerships')
+          .where('userA', isEqualTo: reportedId)
+          .limit(200)
           .get();
-      final partnerships2 = await _db.collection('partnerships')
-          .where('userB', whereIn: [reportedId])
+      final asB = await _db
+          .collection('partnerships')
+          .where('userB', isEqualTo: reportedId)
+          .limit(200)
           .get();
 
       final partnerIds = <String>{};
-      for (final p in partnerships.docs) {
-        partnerIds.add(p.data()['userB']);
+      for (final p in asA.docs) {
+        final v = p.data()['userB'];
+        if (v is String) partnerIds.add(v);
       }
-      for (final p in partnerships2.docs) {
-        partnerIds.add(p.data()['userA']);
+      for (final p in asB.docs) {
+        final v = p.data()['userA'];
+        if (v is String) partnerIds.add(v);
       }
       partnerIds.remove(reportedId);
 
@@ -262,12 +283,15 @@ class ReportService {
 
   /// Checks all pending reports and processes any that have passed deadlines.
   /// Call this on app startup or from a scheduled Cloud Function.
+  ///
+  /// Single-where queries only — zero indexes needed.
   static Future<void> processDeadlines() async {
     final now = DateTime.now();
 
     // 1. Expire proof deadlines
     try {
-      final pending = await _db.collection('reports')
+      final pending = await _db
+          .collection('reports')
           .where('status', isEqualTo: 'pending_proof')
           .get();
 
@@ -284,7 +308,8 @@ class ReportService {
 
     // 2. Delete cheaters past 36h window
     try {
-      final cheaters = await _db.collection('reports')
+      final cheaters = await _db
+          .collection('reports')
           .where('status', isEqualTo: 'cheater')
           .get();
 
@@ -300,4 +325,3 @@ class ReportService {
     }
   }
 }
-
