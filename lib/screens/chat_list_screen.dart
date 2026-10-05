@@ -26,41 +26,81 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _load(reset: true);
   }
 
+  // Cursors for real server-side pagination.
+  DocumentSnapshot? _lastDocA;
+  DocumentSnapshot? _lastDocB;
+  bool _hasMoreA = true;
+  bool _hasMoreB = true;
+
   /// Fetches chats where I'm userA and userB separately.
   /// No orderBy + where combo → zero composite indexes needed.
+  /// First page: 30 + 30. Each "Load More": 30 + 30 via startAfterDocument.
   Future<void> _load({required bool reset}) async {
     if (reset) {
       setState(() {
         _loading = true;
         _chats.clear();
+        _lastDocA = null;
+        _lastDocB = null;
+        _hasMoreA = true;
+        _hasMoreB = true;
       });
     } else {
       if (_loadingMore) return;
+      if (!_hasMoreA && !_hasMoreB) return;   // nothing left on either side
       setState(() => _loadingMore = true);
     }
 
     try {
       final db = FirebaseFirestore.instance;
-      // Fetch up to 200 from each side; merged/sorted below.
-      final results = await Future.wait([
-        db
-            .collection('chats')
-            .where('userA', isEqualTo: _currentUserId)
-            .limit(200)
-            .get(),
-        db
-            .collection('chats')
-            .where('userB', isEqualTo: _currentUserId)
-            .limit(200)
-            .get(),
-      ]);
 
-      // Merge + dedupe by doc id
-      final seen = <String>{};
+      // Build both queries — first page or next page per side.
+      Query qA = db
+          .collection('chats')
+          .where('userA', isEqualTo: _currentUserId)
+          .limit(_pageSize);
+      Query qB = db
+          .collection('chats')
+          .where('userB', isEqualTo: _currentUserId)
+          .limit(_pageSize);
+
+      if (!reset) {
+        if (_hasMoreA && _lastDocA != null) {
+          qA = qA.startAfterDocument(_lastDocA!);
+        } else {
+          qA = qA.limit(0);   // exhausted — fetch nothing
+        }
+        if (_hasMoreB && _lastDocB != null) {
+          qB = qB.startAfterDocument(_lastDocB!);
+        } else {
+          qB = qB.limit(0);
+        }
+      }
+
+      final results = await Future.wait([qA.get(), qB.get()]);
+      final snapA = results[0];
+      final snapB = results[1];
+
+      // Advance cursors + hasMore flags
+      if (snapA.docs.isNotEmpty) {
+        _lastDocA = snapA.docs.last;
+        _hasMoreA = snapA.docs.length == _pageSize;
+      } else {
+        _hasMoreA = false;
+      }
+      if (snapB.docs.isNotEmpty) {
+        _lastDocB = snapB.docs.last;
+        _hasMoreB = snapB.docs.length == _pageSize;
+      } else {
+        _hasMoreB = false;
+      }
+
+      // Merge + dedupe by doc id (new page against what we already have)
+      final existingIds = _chats.map((d) => d.id).toSet();
       final merged = <QueryDocumentSnapshot>[];
       for (final snap in results) {
         for (final d in snap.docs) {
-          if (seen.add(d.id)) merged.add(d);
+          if (existingIds.add(d.id)) merged.add(d);
         }
       }
 
@@ -78,9 +118,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
       if (!mounted) return;
       setState(() {
-        _chats
-          ..clear()
-          ..addAll(merged);
+        if (reset) {
+          _chats
+            ..clear()
+            ..addAll(merged);
+        } else {
+          _chats.addAll(merged);
+        }
         _loading = false;
       });
     } catch (e) {
@@ -91,11 +135,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  /// Client-side "load more": we already fetched up to 200 from each side.
-  /// This just reveals more of the cached list — no network.
-  void _showMore() {
-    setState(() => _loadingMore = false);
-  }
+  bool get _hasMore => _hasMoreA || _hasMoreB;
 
   @override
   Widget build(BuildContext context) {
@@ -328,3 +368,4 @@ class _ChatRow extends StatelessWidget {
     return DateFormat('MMM d').format(d);
   }
 }
+

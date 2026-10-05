@@ -7,7 +7,8 @@ class RateLimits {
   static const Duration createPost = Duration(seconds: 30);
   static const Duration sendComment = Duration(seconds: 10);
   static const Duration toggleLike = Duration(seconds: 1);
-  static const Duration submitReport = Duration(hours: 72);
+  static const Duration submitReport = Duration(hours: 24);
+  static const int reportsPerDay = 5;
   static const Duration proposePartnership = Duration(minutes: 2);
   static const Duration sendChatMessage = Duration(seconds: 2);
 
@@ -135,3 +136,4 @@ String firestoreErrorToMessage(Object e) {
   }
   return 'Something went wrong. Please try again.';
 }
+

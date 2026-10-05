@@ -358,12 +358,12 @@ class _PartnershipsMergedListState
         db
             .collection('partnerships')
             .where('userA', isEqualTo: widget.uid)
-            .limit(100)
+            .limit(20)
             .get(),
         db
             .collection('partnerships')
             .where('userB', isEqualTo: widget.uid)
-            .limit(100)
+            .limit(20)
             .get(),
       ]);
 
@@ -591,3 +591,4 @@ class _PartnershipsMergedListState
     );
   }
 }
+

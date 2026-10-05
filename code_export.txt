@@ -765,12 +765,12 @@ class _PartnershipsMergedListState
         db
             .collection('partnerships')
             .where('userA', isEqualTo: widget.uid)
-            .limit(100)
+            .limit(20)
             .get(),
         db
             .collection('partnerships')
             .where('userB', isEqualTo: widget.uid)
-            .limit(100)
+            .limit(20)
             .get(),
       ]);
 
@@ -998,6 +998,7 @@ class _PartnershipsMergedListState
     );
   }
 }
+
 
 
 // ===== FILE: lib\screens\admin_dashboard_screen.dart =====
@@ -4038,41 +4039,81 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _load(reset: true);
   }
 
+  // Cursors for real server-side pagination.
+  DocumentSnapshot? _lastDocA;
+  DocumentSnapshot? _lastDocB;
+  bool _hasMoreA = true;
+  bool _hasMoreB = true;
+
   /// Fetches chats where I'm userA and userB separately.
   /// No orderBy + where combo → zero composite indexes needed.
+  /// First page: 30 + 30. Each "Load More": 30 + 30 via startAfterDocument.
   Future<void> _load({required bool reset}) async {
     if (reset) {
       setState(() {
         _loading = true;
         _chats.clear();
+        _lastDocA = null;
+        _lastDocB = null;
+        _hasMoreA = true;
+        _hasMoreB = true;
       });
     } else {
       if (_loadingMore) return;
+      if (!_hasMoreA && !_hasMoreB) return;   // nothing left on either side
       setState(() => _loadingMore = true);
     }
 
     try {
       final db = FirebaseFirestore.instance;
-      // Fetch up to 200 from each side; merged/sorted below.
-      final results = await Future.wait([
-        db
-            .collection('chats')
-            .where('userA', isEqualTo: _currentUserId)
-            .limit(200)
-            .get(),
-        db
-            .collection('chats')
-            .where('userB', isEqualTo: _currentUserId)
-            .limit(200)
-            .get(),
-      ]);
 
-      // Merge + dedupe by doc id
-      final seen = <String>{};
+      // Build both queries — first page or next page per side.
+      Query qA = db
+          .collection('chats')
+          .where('userA', isEqualTo: _currentUserId)
+          .limit(_pageSize);
+      Query qB = db
+          .collection('chats')
+          .where('userB', isEqualTo: _currentUserId)
+          .limit(_pageSize);
+
+      if (!reset) {
+        if (_hasMoreA && _lastDocA != null) {
+          qA = qA.startAfterDocument(_lastDocA!);
+        } else {
+          qA = qA.limit(0);   // exhausted — fetch nothing
+        }
+        if (_hasMoreB && _lastDocB != null) {
+          qB = qB.startAfterDocument(_lastDocB!);
+        } else {
+          qB = qB.limit(0);
+        }
+      }
+
+      final results = await Future.wait([qA.get(), qB.get()]);
+      final snapA = results[0];
+      final snapB = results[1];
+
+      // Advance cursors + hasMore flags
+      if (snapA.docs.isNotEmpty) {
+        _lastDocA = snapA.docs.last;
+        _hasMoreA = snapA.docs.length == _pageSize;
+      } else {
+        _hasMoreA = false;
+      }
+      if (snapB.docs.isNotEmpty) {
+        _lastDocB = snapB.docs.last;
+        _hasMoreB = snapB.docs.length == _pageSize;
+      } else {
+        _hasMoreB = false;
+      }
+
+      // Merge + dedupe by doc id (new page against what we already have)
+      final existingIds = _chats.map((d) => d.id).toSet();
       final merged = <QueryDocumentSnapshot>[];
       for (final snap in results) {
         for (final d in snap.docs) {
-          if (seen.add(d.id)) merged.add(d);
+          if (existingIds.add(d.id)) merged.add(d);
         }
       }
 
@@ -4090,9 +4131,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
       if (!mounted) return;
       setState(() {
-        _chats
-          ..clear()
-          ..addAll(merged);
+        if (reset) {
+          _chats
+            ..clear()
+            ..addAll(merged);
+        } else {
+          _chats.addAll(merged);
+        }
         _loading = false;
       });
     } catch (e) {
@@ -4103,11 +4148,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
   }
 
-  /// Client-side "load more": we already fetched up to 200 from each side.
-  /// This just reveals more of the cached list — no network.
-  void _showMore() {
-    setState(() => _loadingMore = false);
-  }
+  bool get _hasMore => _hasMoreA || _hasMoreB;
 
   @override
   Widget build(BuildContext context) {
@@ -4342,6 +4383,7 @@ class _ChatRow extends StatelessWidget {
 }
 
 
+
 // ===== FILE: lib\screens\chat_screen.dart =====
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -4436,23 +4478,22 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _ensureChatExists() async {
+    // ⭐ Single write — no read, so no read-rule crash on non-existent docs.
+    //    set(merge:true) creates if missing, patches if present. Idempotent.
     final ref = FirebaseFirestore.instance.collection('chats').doc(_chatId);
-    final doc = await ref.get();
-    if (!doc.exists) {
-      await ref.set({
-        'userA': _isUserA ? _currentUserId : widget.otherUserId,
-        'userB': _isUserA ? widget.otherUserId : _currentUserId,
-        'lastMessage': '',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageSenderId': '',
-        'unreadForUserA': 0,
-        'unreadForUserB': 0,
-        'lastReadByUserA': null,
-        'lastReadByUserB': null,
-        'createdAt': FieldValue.serverTimestamp(),
-        'partnershipStatus': 'none',
-      });
-    }
+    await ref.set({
+      'userA': _isUserA ? _currentUserId : widget.otherUserId,
+      'userB': _isUserA ? widget.otherUserId : _currentUserId,
+      'lastMessage': '',
+      'lastMessageTime': FieldValue.serverTimestamp(),
+      'lastMessageSenderId': '',
+      'unreadForUserA': 0,
+      'unreadForUserB': 0,
+      'lastReadByUserA': null,
+      'lastReadByUserB': null,
+      'createdAt': FieldValue.serverTimestamp(),
+      'partnershipStatus': 'none',
+    }, SetOptions(merge: true));
   }
 
   /// Debounced mark-read. Only writes if not called in the last 2 seconds.
@@ -4490,10 +4531,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send() async {
-    // ✅ Ensure the chat doc exists before the first message,
-    //    otherwise messages/{id} create rule (get(chats/...)) denies.
-    await _ensureChatExists();
-
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
     if (text.length > 500) {
@@ -4502,36 +4539,41 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Block check
-    try {
-      final iBlocked = await BlockService.haveIBlocked(widget.otherUserId);
-      final theyBlocked = await BlockService.hasBlockedMe(widget.otherUserId);
-      if (iBlocked) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You blocked this user. Unblock to send messages.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-      if (theyBlocked) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You cannot message this user.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-    } catch (e) {
-      debugPrint('[Chat] block check error: $e');
-    }
-
     setState(() => _sending = true);
     try {
+      // ⭐ Ensure chat doc exists FIRST — inside try so failures are visible.
+      await _ensureChatExists();
+
+      // Block check
+      try {
+        final iBlocked = await BlockService.haveIBlocked(widget.otherUserId);
+        final theyBlocked =
+            await BlockService.hasBlockedMe(widget.otherUserId);
+        if (iBlocked) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content:
+                  Text('You blocked this user. Unblock to send messages.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        if (theyBlocked) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('You cannot message this user.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      } catch (e) {
+        debugPrint('[Chat] block check error: $e');
+      }
+
       await FirebaseFirestore.instance
           .collection('chats').doc(_chatId)
           .collection('messages').add({
@@ -4563,8 +4605,17 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       debugPrint('[Chat] send error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
-    if (mounted) setState(() => _sending = false);
   }
 
   Future<void> _proposePartnership() async {
@@ -5448,6 +5499,7 @@ class _ReportMenuButton extends StatelessWidget {
     );
   }
 }
+
 
 
 
@@ -7948,14 +8000,27 @@ class _MainFeedScreenState extends State<MainFeedScreen> {
     try {
       final user = FirebaseAuth.instance.currentUser!;
 
-      // Resolve username (cached)
-      String username = _cachedUsername ?? '';
-      if (username.isEmpty) {
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users').doc(user.uid).get();
-        username = userDoc.data()?['username'] ?? 'Unknown';
-        _cachedUsername = username;
+      // ⭐ Prefer Auth displayName (server-persisted, per-user, never stale).
+      //    Fall back to a uid-derived handle if somehow missing.
+      String username = user.displayName ?? '';
+      if (username.isEmpty || username == 'Unknown') {
+        // One-time repair: pull from Firestore and push to displayName
+        try {
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users').doc(user.uid).get();
+          final fetched = userDoc.data()?['username'] as String?;
+          if (fetched != null && fetched.isNotEmpty && fetched != 'Unknown') {
+            username = fetched;
+            await user.updateDisplayName(fetched);
+          }
+        } catch (e) {
+          debugPrint('[Feed] username repair failed: $e');
+        }
       }
+      if (username.isEmpty || username == 'Unknown') {
+        username = 'user_${user.uid.substring(0, 6)}';
+      }
+      _cachedUsername = username;
 
       // ---- Build the batch ----
       final batch = FirebaseFirestore.instance.batch();
@@ -8550,6 +8615,7 @@ class _ReportBanner extends StatelessWidget {
     );
   }
 }
+
 
 
 
@@ -9267,6 +9333,7 @@ class PartnershipSheet extends StatelessWidget {
 
 
 
+
 // ===== FILE: lib\screens\post_detail_screen.dart =====
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -9928,14 +9995,16 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _postsPill(String? userUid) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    // ✅ count() aggregation — 1 read per 1000 docs, no live listener.
+    // Previously: live stream over up to 500 documents.
+    return FutureBuilder<AggregateQuerySnapshot>(
+      future: FirebaseFirestore.instance
           .collection('posts')
           .where('userId', isEqualTo: userUid)
-          .limit(500)
-          .snapshots(),
+          .count()
+          .get(),
       builder: (context, snap) {
-        final count = snap.data?.docs.length ?? 0;
+        final count = snap.data?.count ?? 0;
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
@@ -10418,25 +10487,66 @@ class _ProfilePartnershipsMergedState
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  // Cursors for real server-side pagination.
+  DocumentSnapshot? _lastDocA;
+  DocumentSnapshot? _lastDocB;
+  bool _hasMoreA = true;
+  bool _hasMoreB = true;
+
+  Future<void> _load({bool more = false}) async {
+    if (!more) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _docs = [];
+        _visible = 20;
+        _lastDocA = null;
+        _lastDocB = null;
+        _hasMoreA = true;
+        _hasMoreB = true;
+      });
+    } else {
+      if (!_hasMoreA && !_hasMoreB) return;
+      setState(() => _loading = true);
+    }
+
     try {
       final db = FirebaseFirestore.instance;
-      final results = await Future.wait([
-        db.collection('partnerships')
-            .where('userA', isEqualTo: widget.uid).limit(100).get(),
-        db.collection('partnerships')
-            .where('userB', isEqualTo: widget.uid).limit(100).get(),
-      ]);
 
-      final seen = <String>{};
+      Query qA = db.collection('partnerships')
+          .where('userA', isEqualTo: widget.uid).limit(20);
+      Query qB = db.collection('partnerships')
+          .where('userB', isEqualTo: widget.uid).limit(20);
+
+      if (more) {
+        qA = (_hasMoreA && _lastDocA != null)
+            ? qA.startAfterDocument(_lastDocA!) : qA.limit(0);
+        qB = (_hasMoreB && _lastDocB != null)
+            ? qB.startAfterDocument(_lastDocB!) : qB.limit(0);
+      }
+
+      final results = await Future.wait([qA.get(), qB.get()]);
+      final snapA = results[0];
+      final snapB = results[1];
+
+      if (snapA.docs.isNotEmpty) {
+        _lastDocA = snapA.docs.last;
+        _hasMoreA = snapA.docs.length == 20;
+      } else {
+        _hasMoreA = false;
+      }
+      if (snapB.docs.isNotEmpty) {
+        _lastDocB = snapB.docs.last;
+        _hasMoreB = snapB.docs.length == 20;
+      } else {
+        _hasMoreB = false;
+      }
+
+      final existingIds = _docs.map((d) => d.id).toSet();
       final merged = <DocumentSnapshot>[];
       for (final snap in results) {
         for (final d in snap.docs) {
-          if (seen.add(d.id)) merged.add(d);
+          if (existingIds.add(d.id)) merged.add(d);
         }
       }
 
@@ -10453,7 +10563,11 @@ class _ProfilePartnershipsMergedState
 
       if (!mounted) return;
       setState(() {
-        _docs = merged;
+        if (more) {
+          _docs = [..._docs, ...merged];
+        } else {
+          _docs = merged;
+        }
         _loading = false;
       });
     } catch (e) {
@@ -10503,7 +10617,7 @@ class _ProfilePartnershipsMergedState
     final hasMore = _visible < _docs.length;
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () => _load(),
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: visible.length + (hasMore ? 1 : 0),
@@ -10521,8 +10635,7 @@ class _ProfilePartnershipsMergedState
                     ),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
-                      onPressed: () =>
-                          setState(() => _visible += 20),
+                      onPressed: _loading ? null : () => _load(more: true),
                       icon: const Icon(Icons.expand_more, size: 18),
                       label: const Text('Load More'),
                       style: OutlinedButton.styleFrom(
@@ -10715,6 +10828,7 @@ class _ProfilePartnershipsMergedState
     );
   }
 }
+
 
 
 
@@ -10996,6 +11110,7 @@ class _ReportSheetState extends State<ReportSheet> {
     );
   }
 }
+
 
 
 
@@ -11662,11 +11777,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: const Icon(Icons.check, color: Colors.blue),
               title: const Text('English'),
               onTap: () => Navigator.pop(context),
-            ),
-            ListTile(
-              leading: const SizedBox(width: 24),
-              title: const Text('Coming soon: More languages'),
-              enabled: false,
             ),
             const SizedBox(height: 12),
           ],
@@ -13057,7 +13167,8 @@ class RateLimits {
   static const Duration createPost = Duration(seconds: 30);
   static const Duration sendComment = Duration(seconds: 10);
   static const Duration toggleLike = Duration(seconds: 1);
-  static const Duration submitReport = Duration(hours: 72);
+  static const Duration submitReport = Duration(hours: 24);
+  static const int reportsPerDay = 5;
   static const Duration proposePartnership = Duration(minutes: 2);
   static const Duration sendChatMessage = Duration(seconds: 2);
 
@@ -13185,6 +13296,7 @@ String firestoreErrorToMessage(Object e) {
   }
   return 'Something went wrong. Please try again.';
 }
+
 
 
 // ===== FILE: lib\services\rate_limit_service.dart =====

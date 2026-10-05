@@ -314,14 +314,16 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _postsPill(String? userUid) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    // ✅ count() aggregation — 1 read per 1000 docs, no live listener.
+    // Previously: live stream over up to 500 documents.
+    return FutureBuilder<AggregateQuerySnapshot>(
+      future: FirebaseFirestore.instance
           .collection('posts')
           .where('userId', isEqualTo: userUid)
-          .limit(500)
-          .snapshots(),
+          .count()
+          .get(),
       builder: (context, snap) {
-        final count = snap.data?.docs.length ?? 0;
+        final count = snap.data?.count ?? 0;
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
@@ -804,25 +806,66 @@ class _ProfilePartnershipsMergedState
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  // Cursors for real server-side pagination.
+  DocumentSnapshot? _lastDocA;
+  DocumentSnapshot? _lastDocB;
+  bool _hasMoreA = true;
+  bool _hasMoreB = true;
+
+  Future<void> _load({bool more = false}) async {
+    if (!more) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _docs = [];
+        _visible = 20;
+        _lastDocA = null;
+        _lastDocB = null;
+        _hasMoreA = true;
+        _hasMoreB = true;
+      });
+    } else {
+      if (!_hasMoreA && !_hasMoreB) return;
+      setState(() => _loading = true);
+    }
+
     try {
       final db = FirebaseFirestore.instance;
-      final results = await Future.wait([
-        db.collection('partnerships')
-            .where('userA', isEqualTo: widget.uid).limit(100).get(),
-        db.collection('partnerships')
-            .where('userB', isEqualTo: widget.uid).limit(100).get(),
-      ]);
 
-      final seen = <String>{};
+      Query qA = db.collection('partnerships')
+          .where('userA', isEqualTo: widget.uid).limit(20);
+      Query qB = db.collection('partnerships')
+          .where('userB', isEqualTo: widget.uid).limit(20);
+
+      if (more) {
+        qA = (_hasMoreA && _lastDocA != null)
+            ? qA.startAfterDocument(_lastDocA!) : qA.limit(0);
+        qB = (_hasMoreB && _lastDocB != null)
+            ? qB.startAfterDocument(_lastDocB!) : qB.limit(0);
+      }
+
+      final results = await Future.wait([qA.get(), qB.get()]);
+      final snapA = results[0];
+      final snapB = results[1];
+
+      if (snapA.docs.isNotEmpty) {
+        _lastDocA = snapA.docs.last;
+        _hasMoreA = snapA.docs.length == 20;
+      } else {
+        _hasMoreA = false;
+      }
+      if (snapB.docs.isNotEmpty) {
+        _lastDocB = snapB.docs.last;
+        _hasMoreB = snapB.docs.length == 20;
+      } else {
+        _hasMoreB = false;
+      }
+
+      final existingIds = _docs.map((d) => d.id).toSet();
       final merged = <DocumentSnapshot>[];
       for (final snap in results) {
         for (final d in snap.docs) {
-          if (seen.add(d.id)) merged.add(d);
+          if (existingIds.add(d.id)) merged.add(d);
         }
       }
 
@@ -839,7 +882,11 @@ class _ProfilePartnershipsMergedState
 
       if (!mounted) return;
       setState(() {
-        _docs = merged;
+        if (more) {
+          _docs = [..._docs, ...merged];
+        } else {
+          _docs = merged;
+        }
         _loading = false;
       });
     } catch (e) {
@@ -889,7 +936,7 @@ class _ProfilePartnershipsMergedState
     final hasMore = _visible < _docs.length;
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () => _load(),
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: visible.length + (hasMore ? 1 : 0),
@@ -907,8 +954,7 @@ class _ProfilePartnershipsMergedState
                     ),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
-                      onPressed: () =>
-                          setState(() => _visible += 20),
+                      onPressed: _loading ? null : () => _load(more: true),
                       icon: const Icon(Icons.expand_more, size: 18),
                       label: const Text('Load More'),
                       style: OutlinedButton.styleFrom(
@@ -1101,4 +1147,5 @@ class _ProfilePartnershipsMergedState
     );
   }
 }
+
 
